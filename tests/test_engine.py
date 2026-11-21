@@ -213,6 +213,25 @@ def test_empty_utterance_is_not_treated_as_intent(store: DataStore) -> None:
     assert turn.session.state is DialogueState.QUESTION
 
 
+def test_complete_ends_session_as_child_exit(store: DataStore) -> None:
+    kid, engine, result = start(store)
+    done = engine.complete(result.session.id)
+    assert done.session.end_reason is MissionEndReason.CHILD_EXIT
+    assert not done.session.is_active
+    assert done.reply  # 別れのあいさつが返る
+    assert store.list_mission_results(kid.id)[0].outcome is MissionOutcome.CHILD_EXIT
+    messages = store.list_messages(result.session.id)
+    assert messages[-1].role is MessageRole.ASSISTANT
+    assert messages[-1].state is DialogueState.COMPLETE
+
+
+def test_complete_twice_raises_session_closed(store: DataStore) -> None:
+    _kid, engine, result = start(store)
+    engine.complete(result.session.id)
+    with pytest.raises(SessionClosed):
+        engine.complete(result.session.id)
+
+
 def test_maybe_idle_closes_session_after_window(store: DataStore) -> None:
     clock = [100.0]
     llm = FakeLLM(responses=["i", "またね"])

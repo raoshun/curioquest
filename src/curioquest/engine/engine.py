@@ -222,6 +222,16 @@ class DialogueEngine:
             return None
         return self._finish(session, MissionEndReason.IDLE, _IDLE_REPLY)
 
+    def complete(self, session_id: str) -> TurnResult:
+        """「おしまい」ボタンなど、発話を介さない明示的なミッション終了（03 12）。
+
+        終了理由は CHILD_EXIT として保存する。
+        """
+        session = self.store.get_session(session_id)
+        if not session.is_active:
+            raise SessionClosed(session.id)
+        return self._finish(session, MissionEndReason.CHILD_EXIT, _FAREWELL_REPLY)
+
     # -------------------------------------------------------------- helpers
 
     def _hint_turn(
