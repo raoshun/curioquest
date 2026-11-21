@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# SQLite / ローカルデータ
+data/
+*.sqlite3
+*.db
+
+# 環境変数（秘密情報はコミットしない）
+.env
+
+# Node / フロントエンド（将来）
+node_modules/
+
+# エディタ
+.vscode/
+.idea/
+.DS_Store
