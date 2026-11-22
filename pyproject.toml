@@ -15,6 +15,9 @@ dependencies = [
 [project.optional-dependencies]
 stt = [
     "faster-whisper>=1.0",
+    # faster-whisper は av の open(kwarg metadata_errors=...) を呼ぶが、av 19 で
+    # 除去された（av 18 までは存在）。faster-whisper 側の追従まで上 Bound で守る。
+    "av<19",
 ]
 
 [project.scripts]
