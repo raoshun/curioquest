@@ -434,7 +434,9 @@ class DataStore:
         outcome: MissionOutcome,
         thinking_summary: str | None = None,
         signals: dict[str, Any] | None = None,
+        finished_at: str | None = None,
     ) -> MissionResult:
+        # finished_at 未指定時は DB デフォルト (UTC の datetime('now')) を使う
         result = MissionResult(
             id=new_id("mres"),
             session_id=session_id,
@@ -443,23 +445,44 @@ class DataStore:
             outcome=outcome,
             thinking_summary=thinking_summary,
             signals=signals or {},
+            finished_at=finished_at,
         )
-        self.db.execute(
-            """
-            INSERT INTO mission_results
-                (id, session_id, child_id, mission_id, outcome, thinking_summary, signals)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                result.id,
-                session_id,
-                child_id,
-                mission_id,
-                str(outcome),
-                thinking_summary,
-                _j(result.signals),
-            ),
-        )
+        if finished_at is None:
+            self.db.execute(
+                """
+                INSERT INTO mission_results
+                    (id, session_id, child_id, mission_id, outcome, thinking_summary, signals)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    result.id,
+                    session_id,
+                    child_id,
+                    mission_id,
+                    str(outcome),
+                    thinking_summary,
+                    _j(result.signals),
+                ),
+            )
+        else:
+            self.db.execute(
+                """
+                INSERT INTO mission_results
+                    (id, session_id, child_id, mission_id, outcome, thinking_summary, signals,
+                     finished_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    result.id,
+                    session_id,
+                    child_id,
+                    mission_id,
+                    str(outcome),
+                    thinking_summary,
+                    _j(result.signals),
+                    finished_at,
+                ),
+            )
         return result
 
     def list_mission_results(self, child_id: str) -> list[MissionResult]:
