@@ -1,0 +1,51 @@
+# CurioQuest スタック（設計書 03-3.5 をベースに、Phase 1 は STT をアプリ内蔵とした）:
+#   backend  … FastAPI + in-app faster-whisper STT（このリポジトリをビルド）
+#   voicevox … VOICEVOX Engine（TTS。CPU イメージの確定タグを使用）
+# ローカル LLM は既存のホスト基盤（vLLM 等）を host.docker.internal 経由で使う。
+# 必要な環境変数は .env.example を参照（無くても起動は可能）。
+services:
+  backend:
+    build:
+      context: .
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      # ホスト側のローカル LLM（Ollama 等）をデフォルトにする。上書きは .env で。
+      # API キー未設定時に空文字が渡るように :-) 修飾を付ける（空はヘッダ非送信）。
+      CURIOQUEST_LLM_BASE_URL: ${CURIOQUEST_LLM_BASE_URL:-http://host.docker.internal:11434/v1}
+      CURIOQUEST_LLM_MODEL: ${CURIOQUEST_LLM_MODEL:-qwen2.5}
+      CURIOQUEST_LLM_API_KEY: ${CURIOQUEST_LLM_API_KEY:-}
+      CURIOQUEST_LLM_TEMPERATURE: ${CURIOQUEST_LLM_TEMPERATURE:-1.0}
+      CURIOQUEST_LLM_MAX_TOKENS: ${CURIOQUEST_LLM_MAX_TOKENS:-8192}
+      CURIOQUEST_LLM_NUM_COMPLETIONS: ${CURIOQUEST_LLM_NUM_COMPLETIONS:-2}
+      CURIOQUEST_VOICEVOX_BASE_URL: ${CURIOQUEST_VOICEVOX_BASE_URL:-http://voicevox:50021}
+      CURIOQUEST_VOICEVOX_DEFAULT_SPEAKER: ${CURIOQUEST_VOICEVOX_DEFAULT_SPEAKER:-17}
+      CURIOQUEST_STT_MODEL: ${CURIOQUEST_STT_MODEL:-small}
+      CURIOQUEST_DB_PATH: /data/curioquest.db
+    extra_hosts:
+      # Linux でも host.docker.internal を解決できるようにする
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - curioquest-data:/data
+      - curioquest-hf-cache:/root/.cache/huggingface
+    depends_on:
+      voicevox:
+        condition: service_started
+    healthcheck:
+      # イメージに curl が無いので python の標準ライブラリで探す
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
+  voicevox:
+    # マルチアーキテクチャ（amd64/arm64）の確定タグ（CPU 版）
+    image: voicevox/voicevox_engine:cpu-0.26.2
+    # 50021 ポートは compose 内部だけで使い、ホストへは公開しない
+    restart: unless-stopped
+
+volumes:
+  curioquest-data:
+  curioquest-hf-cache:
