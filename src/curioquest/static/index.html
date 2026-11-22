@@ -49,62 +49,107 @@
 const $ = (id) => document.getElementById(id);
 const api = async (path, options = {}) => {
   const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
-  if (!res.ok) throw new Error(`${res.status} ${(await res.json()).detail ?? res.statusText}`);
-  return res.status === 204 ? null : res.json();
+  if (!res.ok) {
+    let detail = res.statusText;
+    try { const j = await res.json(); detail = j.detail ?? JSON.stringify(j).slice(0, 120); } catch { /* JSON 以外の本文は無視 */ }
+    throw new Error(`HTTP ${res.status}: ${String(detail).slice(0, 160)}`);
+  }
+  if (res.status === 204) return null;
+  return res.json();
 };
 const set = (id, text) => { $(id).textContent = text; };
+const TURN_WAIT = "送信しました。キャラクターが考えています…（この環境では 1 返事に 30〜90 秒かかることがあります）";
 
 let childId = null, session = null;
+let busy = false, started = false, ended = false;
+function refreshButtons() {
+  const usable = started && !ended;
+  $("startBtn").disabled = started || busy;
+  // 録音中の「おわったよ」停止は常に押せるようにする
+  $("micBtn").disabled = !usable || (busy && !recording);
+  $("stopWordHi").disabled = !usable || busy || recording;
+  $("stopWordYada").disabled = !usable || busy || recording;
+}
 let mediaStream = null, sourceNode = null, audioCtx = null, processor = null;
 let recording = false, recordedChunks = [], recordStart = 0, timerId = null;
 
 $("startBtn").addEventListener("click", async () => {
+  if (busy || started) return;
+  busy = true; refreshButtons();
   try {
     set("metaStatus", "こどもを登録しています…");
     const child = await api("/api/children", { method: "POST", body: JSON.stringify({ nickname: "Web検証" }) });
     childId = child.id;
-    set("metaStatus", `こども ${child.nickname} 作成。今日のセッションを開始します…`);
+    set("metaStatus", "こどもを作成しました。今日のセッションを開始します…（この環境では 30〜90 秒かかります。このままお待ちください）");
     session = await api("/api/sessions", { method: "POST", body: JSON.stringify({ child_id: childId }) });
-    set("metaStatus", `ミッション「${session.mission_id}」開始（状態: ${session.state}）。マイクをお使いください`);
-    $("startBtn").disabled = true;
-    for (const id of ["micBtn", "stopWordHi", "stopWordYada"]) $(id).disabled = false;
+    started = true;
+    set("metaStatus", `ミッション「${session.mission_id}」開始（状態: ${session.state}）。下のマイクボタンかあいことばを使ってください`);
   } catch (err) { set("metaStatus", `開始失敗: ${err.message}`); }
+  finally { busy = false; refreshButtons(); }
 });
 
 async function startRecording() {
-  recordedChunks = [];
-  const source = await captureSource();
-  // PCM を集めて録音中に WAV 化するため AudioContext を使う
-  audioCtx = audioCtx ?? new AudioContext();
-  await audioCtx.resume();
-  sourceNode = audioCtx.createMediaStreamSource(source);
-  processor = audioCtx.createScriptProcessor(4096, 1, 1);
-  const inputRate = audioCtx.sampleRate;
-  processor.onaudioprocess = (e) => {
-    const data = downsample(e.inputBuffer.getChannelData(0), inputRate, 16000);
-    const pcm = new Int16Array(data.length);
-    for (let i = 0; i < data.length; i++) pcm[i] = Math.max(-32768, Math.min(32767, Math.round(data[i] * 32767)));
-    recordedChunks.push(pcm);
-  };
-  sourceNode.connect(processor);
-  processor.connect(audioCtx.destination);
-  recording = true;
-  recordStart = performance.now();
-  timerId = setInterval(() => set("timer", `${((performance.now() - recordStart) / 1000).toFixed(1)}s`), 100);
-  $("micBtn").textContent = "おわったよ";
-  $("micBtn").classList.add("record");
-  set("recStatus", "録音中… もう一度押すと送信します");
+  if (busy) { set("recStatus", "いまキャラクターが返事中です。表示されてから録音してください"); return; }
+  set("recStatus", "マイク準備中…（許可を求められたら「許可」を押してください）");
+  try {
+    // AudioContext は getUserMedia と同じクリック操作の中で同期的に生成・再開する。
+    // await の後で作ると自動再生ポリシーで「停止」のままになり、無音データしか採れない。
+    audioCtx = audioCtx ?? new AudioContext();
+    if (audioCtx.state === "suspended") await audioCtx.resume();
+    const source = await captureSource();
+    recordedChunks = [];
+    // PCM を集めて録音中に WAV 化するため AudioContext を使う
+    sourceNode = audioCtx.createMediaStreamSource(source);
+    processor = audioCtx.createScriptProcessor(4096, 1, 1);
+    const inputRate = audioCtx.sampleRate;
+    processor.onaudioprocess = (e) => {
+      const data = downsample(e.inputBuffer.getChannelData(0), inputRate, 16000);
+      const pcm = new Int16Array(data.length);
+      for (let i = 0; i < data.length; i++) pcm[i] = Math.max(-32768, Math.min(32767, Math.round(data[i] * 32767)));
+      recordedChunks.push(pcm);
+    };
+    sourceNode.connect(processor);
+    processor.connect(audioCtx.destination);
+    recording = true;
+    recordStart = performance.now();
+    timerId = setInterval(() => set("timer", `${((performance.now() - recordStart) / 1000).toFixed(1)}s`), 100);
+    $("micBtn").textContent = "おわったよ";
+    $("micBtn").classList.add("record");
+    set("recStatus", "録音中… もう一度押すと送信します");
+    refreshButtons();
+  } catch (err) {
+    const name = (err && err.name) || String(err);
+    if (name === "NotAllowedError" || name === "SecurityError")
+      set("recStatus", "マイクが拒否されました。アドレスバーの 🔒（サイト情報）からマイクを「許可」に変えて再読み込みしてください");
+    else if (name === "NotFoundError" || name === "DevicesNotFoundError")
+      set("recStatus", "マイクが見つかりませんでした。PC のマイク接続を確認してください");
+    else if (name === "NotReadableError" || name === "AbortError")
+      set("recStatus", "マイクを別のアプリが使用中か、マイクの読み取りに失敗しました。他のアプリを閉じて再試行してください");
+    else if (name === "TypeError")
+      set("recStatus", "ブラウザがマイクを使えない文脈です（https か localhost で開いていますか?）");
+    else set("recStatus", `マイク準備に失敗しました (${name})`);
+  }
 }
 
-let pendingStop = false;
-function stopRecordingSeconds() {
-  return recording ? Math.round((performance.now() - recordStart) / 1000) : 0;
-}
-function stopRecording() {
+function abortRecording(message) {
   clearInterval(timerId);
   recording = false;
-  if (processor) { processor.onaudioprocess = null; processor.disconnect(); }
-  if (sourceNode) sourceNode.disconnect();
+  if (processor) { processor.onaudioprocess = null; processor.disconnect(); processor = null; }
+  if (sourceNode) { sourceNode.disconnect(); sourceNode = null; }
+  recordedChunks = [];
+  $("micBtn").textContent = "マイクにお話し";
+  $("micBtn").classList.remove("record");
+  set("recStatus", message);
+  refreshButtons();
+}
+
+function stopRecording() {
+  const seconds = Math.max(1, Math.round((performance.now() - recordStart) / 1000));
+  clearInterval(timerId);
+  recording = false;
+  // 最後の 1 ブロック (~0.1〜0.25 秒) は取りこぼすがデモ用途では許容する
+  if (processor) { processor.onaudioprocess = null; processor.disconnect(); processor = null; }
+  if (sourceNode) { sourceNode.disconnect(); sourceNode = null; }
   $("micBtn").textContent = "マイクにお話し";
   $("micBtn").classList.remove("record");
   const total = recordedChunks.reduce((n, c) => n + c.length, 0);
@@ -112,44 +157,60 @@ function stopRecording() {
   let off = 0;
   for (const c of recordedChunks) { pcm.set(c, off); off += c.length; }
   recordedChunks = [];
-  if (total === 0) { set("recStatus", "無音でした（送信しませんでした）"); recording = false; return; }
-  postVoice(encodeWav(pcm, 16000));
-  set("recStatus", "送信中…");
+  refreshButtons();
+  if (total === 0) { set("recStatus", "マイクの音を集められませんでした（送信していません）。数値が動いていなければ OS のマイク設定を確認してください"); return; }
+  postVoice(encodeWav(pcm, 16000), Math.min(seconds, 3600));
 }
 
 $("micBtn").addEventListener("click", () => { recording ? stopRecording() : startRecording(); });
 async function captureSource() {
   if (mediaStream && mediaStream.active) return mediaStream;
   mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const track = mediaStream.getAudioTracks()[0];
+  if (track) track.addEventListener("ended", () => { mediaStream = null; if (recording) abortRecording("録音の途中でマイクが外れました（送信していません）"); });
   return mediaStream;
 }
-$("stopWordHi").addEventListener("click", () => turn({ text: "ハイ!", seconds_spent: 0 }));
-$("stopWordYada").addEventListener("click", () => turn({ text: "やだ!", seconds_spent: 0 }));
+$("stopWordHi").addEventListener("click", () => turn("ハイ!"));
+$("stopWordYada").addEventListener("click", () => turn("やだ!"));
 
 // 1 ターン（音声送信）: 認識失敗は 503 → 回数を消費していない旨を伝える
-async function postVoice(wav) {
+async function postVoice(wav, seconds) {
+  if (!session || busy) { set("recStatus", "いま処理中です。完了してから録音してください"); return; }
+  busy = true; refreshButtons();
+  set("turnStatus", "音声を送信中です…（認識から返事・合成まで 1〜2 分かかることがあります。このままお待ちください）");
   try {
-    const seconds = Math.min(3600, Math.max(1, stopRecordingSeconds()));
-    const res = await fetch(`/api/sessions/${session.id}/voice?seconds_spent=${seconds}`, {
+    const res = await fetch(`/api/sessions/${session.session_id}/voice?seconds_spent=${seconds}`, {
       method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: wav });
     if (!res.ok) {
-      const detail = (await res.json()).detail ?? res.statusText;
+      let detail = res.statusText;
+      try { detail = (await res.json()).detail ?? detail; } catch { /* JSON でない本文は無視 */ }
+      detail = typeof detail === "string" ? detail : JSON.stringify(detail);
       const why = res.status === 503 ? String(detail).includes("音声認識")
         ? "（このターンは実行されておらず、回数は減っていません）" : "（この設定では音声を入力できません）" : "";
       set("turnStatus", `音声ターン失敗: ${detail} ${why}`);
       return;
     }
     const out = await res.json();
-    renderTurn(out.transcript ?? audioText(out), out, out.stamps_awarded ?? []);
-    set("recStatus", "次の発話をどうぞ");
-  } catch (err) { set("turnStatus", `通信失敗: ${err.message}`); }
+    set("recStatus", "音声を送信し終えました。返事と音を待っています…");
+    renderTurn(audioText(out), out, out.stamps_awarded ?? []);
+  } catch (err) {
+    set("turnStatus", `通信失敗: ${err.message}（サーバはターンを実行済みで回数が減っている可能性があります）`);
+  } finally {
+    busy = false; refreshButtons();
+  }
 }
 // テキストターン（あいことば等）
-async function turn(body) {
+async function turn(text) {
+  if (!session) { set("turnStatus", "まず「はじめる」を押してセッションを開始してください"); return; }
+  if (busy) { set("turnStatus", "はいまキャラクターが返事中です。完了してからもう一度押してください"); return; }
+  busy = true; refreshButtons();
+  set("turnStatus", TURN_WAIT);
   try {
-    const out = await api(`/api/sessions/${session.id}/message`, { method: "POST", body: JSON.stringify(body) });
-    renderTurn(body.text, out, out.stamps_awarded ?? []);
-  } catch (err) { set("turnStatus", `ターン失敗: ${err.message}`); }
+    const body = { text, seconds_spent: 0 };
+    const out = await api(`/api/sessions/${session.session_id}/message`, { method: "POST", body: JSON.stringify(body) });
+    renderTurn(text, out, out.stamps_awarded ?? []);
+  } catch (err) { set("turnStatus", `ターン失敗: ${err.message}（HTTP 4xx は実行前に弾かれたので回数は減っていません）`); }
+  finally { busy = false; refreshButtons(); }
 }
 function audioText(out) { return out.voice_available ? "(音声を再生しました)" : ""; }
 function renderTurn(transcriptText, out, stamps) {
@@ -162,8 +223,11 @@ function renderTurn(transcriptText, out, stamps) {
   if (out.finished) notes.push(`終了 (${out.end_reason}) — 続きはダッシュボードで!`);
   set("turnStatus", notes.join(" / "));
   if (out.finished) {
-    for (const id of ["micBtn", "stopWordHi", "stopWordYada"]) $(id).disabled = true;
-    if (audioCtx) { audioCtx.close(); audioCtx = null; }
+    ended = true;
+    if (mediaStream) { mediaStream.getTracks().forEach((t) => t.stop()); mediaStream = null; }
+    if (audioCtx && audioCtx.state !== "closed") audioCtx.close();
+    audioCtx = null;
+    refreshButtons();
   }
   play(out);
 }
@@ -176,8 +240,12 @@ async function play(out) {
     const url = URL.createObjectURL(new Blob([bytes], { type: "audio/wav" }));
     const el = new Audio(url);
     el.onended = () => URL.revokeObjectURL(url);
+    el.load();
     await el.play();
-  } catch (err) { set("turnStatus", `音声再生失敗: ${err.message}`); }
+  } catch (err) {
+    const name = (err && err.name) || err.message || String(err);
+    set("turnStatus", `音声再生失敗: ${name}${name === "NotAllowedError" ? "（ブラウザの自動再生ブロックです。ページを一度クリックしてから、もう一度あいことばを押してください）" : ""}`);
+  }
 }
 
 // 16 kHz モノ PCM へ落とす + WAV ヘッダ付与（サーバーの認識は 16 kHz WAV）
@@ -205,6 +273,7 @@ function encodeWav(pcm, sampleRate) {
   for (let i = 0; i < pcm.length; i++) buf.setInt16(44 + i * 2, pcm[i], true);
   return new Blob([buf.buffer], { type: "audio/wav" });
 }
+refreshButtons();
 </script>
 </body>
 </html>
