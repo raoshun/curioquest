@@ -2,7 +2,7 @@
 
 音声対話を通じて子どもの「自分で考える力」を育てる、家庭内ローカルAI知育プラットフォームのプロジェクトです。
 
-このブランチ（`voice-interactive-education-app-design`）は、実装に着手する前の**設計仕様書・MVP案**をまとめるためのブランチです。
+本ブランチ（`agents/start-implementation-based-on-specs`）は、[docs/design/](docs/design/) の設計仕様書にもとづいて実装を進めるブランチです。設計仕様書・MVP案のまとまりは `voice-interactive-education-app-design` ブランチにあります。
 
 ## 基本コンセプト
 
@@ -52,7 +52,31 @@ AIは正解を提示することを主目的とせず、問いかけやヒント
 
 ## 開発状況
 
-- [x] 設計仕様書・MVP案の作成（本ブランチ）
-- [ ] Phase 0：技術検証（STT・LLM・TTSの連携）
-- [ ] Phase 1：音声対話MVP
-- [ ] 以降のフェーズ → [06-roadmap.md](docs/design/06-roadmap.md) 参照
+- [x] 設計仕様書・MVP案の作成（`voice-interactive-education-app-design` ブランチ）
+- [x] 音声対話チェーンの実装（LLMアダプター・ルールエンジン・対話エンジン・STT/TTS・API一式・検証用デモページ）
+- [ ] 実機（LOCAL LLM・VOICEVOX）を併せた end-to-end 検証
+- [ ] 以降のフェーズ → [docs/design/06-roadmap.md](docs/design/06-roadmap.md) 参照
+
+## 起動方法
+
+### Docker Compose（Home PC 想定）
+
+```bash
+cp .env.example .env   # LLM URL など必要事項を編集（何も無くても起動は可能）
+docker compose up --build
+```
+
+- 子アプリ: `http://localhost:8000/`（検証用デモページ。API は `/api/*`、API ドキュメントは `/docs`）
+- LLM はデフォルトでホスト側の Ollama（`host.docker.internal:11434/v1`）を使う。LOCAL LLM（vLLM 等）に合わせて `.env` の `CURIOQUEST_LLM_BASE_URL` / `CURIOQUEST_LLM_MODEL` を設定する
+- VOICEVOX Engine は compose 内で併走し、ホストには公開しない。STT（faster-whisper）はバックエンドプロセス内に組み込まれており、認識モデルは named volume にキャッシュする
+
+### ローカル開発（Python 3.12 / uv）
+
+```bash
+uv sync --extra stt                  # 開発依存 + faster-whisper 込みの本番依存（STT なしなら `uv sync`）
+.venv/bin/python -m pytest -q        # テスト実行
+.venv/bin/uvicorn curioquest.api.main:create_standalone_app --factory --reload
+# インストール後はコンソリスクリプトでも同じ起動ができる: curioquest-api
+```
+
+設定は全て `CURIOQUEST_*` 環境変数（対応表は [.env.example](.env.example) を参照）。LLM・VOICEVOX への接続は設定解決のみ起動時、実接続は初回リクエスト時に行うため、下準備が揃っていなくてもサーバー起動と会話のテキスト往復までなら検証できる。
