@@ -54,7 +54,7 @@ AIは正解を提示することを主目的とせず、問いかけやヒント
 
 - [x] 設計仕様書・MVP案の作成（`voice-interactive-education-app-design` ブランチ）
 - [x] 音声対話チェーンの実装（LLMアダプター・ルールエンジン・対話エンジン・STT/TTS・API一式・検証用デモページ）
-- [ ] 実機（LOCAL LLM・VOICEVOX）を併せた end-to-end 検証
+- [x] 実機（LOCAL LLM・VOICEVOX）を併せた end-to-end 検証（テキスト往復・音声往復ともに確認）
 - [ ] 以降のフェーズ → [docs/design/06-roadmap.md](docs/design/06-roadmap.md) 参照
 
 ## 起動方法
@@ -66,7 +66,7 @@ cp .env.example .env   # LLM URL など必要事項を編集（何も無くて�
 docker compose up --build
 ```
 
-- 子アプリ: `http://localhost:8000/`（検証用デモページ。API は `/api/*`、API ドキュメントは `/docs`）
+- 子アプリ: `http://localhost:8000/`（検証用デモページ。API は `/api/*`、API ドキュメントは `/docs`）。ホスト側で 8000 が既に使われていて競合する場合は、`.env` の `CQ_HOST_PORT=8080` のように変更して `docker compose up -d` でコンテナを作り直す（`CURIOQUEST_PORT` はモノリス direct 起動専用で、compose のホストポートは変わらない）
 - LLM はデフォルトでホスト側の Ollama（`host.docker.internal:11434/v1`）を使う。LOCAL LLM（vLLM 等）に合わせて `.env` の `CURIOQUEST_LLM_BASE_URL` / `CURIOQUEST_LLM_MODEL` を設定する
 - VOICEVOX Engine は compose 内で併走し、ホストには公開しない。STT（faster-whisper）はバックエンドプロセス内に組み込まれており、認識モデルは named volume にキャッシュする
 
