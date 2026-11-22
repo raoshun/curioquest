@@ -117,8 +117,10 @@ class DataStore:
         return self._to_child(row)
 
     def list_children(self, family_id: str) -> list[Child]:
+        # created_at は秒精度・id はランダム uuid のため、同一秒に作られた子の並びは
+        # rowid（挿入順に単調増加）で確定させる。保護者向け画面は新しい子を先に表示する。
         rows = self.db.query(
-            "SELECT * FROM children WHERE family_id = ? ORDER BY created_at, id",
+            "SELECT * FROM children WHERE family_id = ? ORDER BY created_at DESC, rowid DESC",
             (family_id,),
         )
         return [self._to_child(r) for r in rows]
