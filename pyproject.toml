@@ -17,6 +17,9 @@ stt = [
     "faster-whisper>=1.0",
 ]
 
+[project.scripts]
+curioquest-api = "curioquest.api.main:main"
+
 [dependency-groups]
 dev = [
     "pytest>=8.3",
