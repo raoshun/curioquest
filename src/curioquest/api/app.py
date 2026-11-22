@@ -8,12 +8,14 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
-from curioquest.api.deps import AppComponents
+from curioquest.api.deps import API, AppComponents
+from curioquest.api.deps import cq as _cq
+from curioquest.api.deps import day_or_today as _day_or_today
 from curioquest.api.schemas import (
     CharacterOut,
     ChildCreate,
@@ -31,21 +33,11 @@ from curioquest.api.schemas import (
     TurnOut,
     character_out,
 )
+from curioquest.api.voice import add_voice_routes
 from curioquest.db.store import DataStore, NotFound
 from curioquest.domain.models import Child, MemoryType, Mission
 from curioquest.engine import DailyLimitExceeded, SessionClosed
 from curioquest.llm import LLMError
-
-API = "/api"
-
-
-def _cq(request: Request) -> AppComponents:
-    """リクエスト単位の依存の取り出し。テストは app.state.cq を差し替える。"""
-    return request.app.state.cq
-
-
-def _day_or_today(day: str | None) -> str:
-    return day or date.today().isoformat()
 
 
 def _local_day(finished_at: str) -> str:
@@ -260,5 +252,7 @@ def create_app(components: AppComponents) -> FastAPI:
                 )
             )
         return DashboardOut(day=resolved_day, children=rows)
+
+    add_voice_routes(app)
 
     return app

@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import base64
+
 from pydantic import BaseModel, Field
 
 from curioquest.domain.models import Character, Child, Memory, Mission, Stamp
@@ -146,6 +148,30 @@ class TurnOut(BaseModel):
             finished=not session.is_active,
             stamps_awarded=list(result.stamps_awarded),
             reset_needed=result.reset_needed,
+        )
+
+
+class VoiceOut(TurnOut):
+    """音声ターンの結果。合成できたときだけ audio_wav_b64 に WAV を載せる。"""
+
+    audio_wav_b64: str | None = None
+    voice_available: bool = False
+    audio_error: str | None = None
+
+    @classmethod
+    def from_turn(
+        cls, turn: TurnOut, wav: bytes | None, audio_error: str | None = None
+    ) -> VoiceOut:
+        """テキストターン結果に合成音（WAV バイト列）を添えて組み立てる。
+
+        wav が None のときは audio_error があってもテキストの応答は有効なので、
+        finished や reply などの対話結果はそのまま返す。
+        """
+        return cls(
+            **turn.model_dump(),
+            audio_wav_b64=base64.b64encode(wav).decode("ascii") if wav is not None else None,
+            voice_available=wav is not None,
+            audio_error=audio_error,
         )
 
 

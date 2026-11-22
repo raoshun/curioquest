@@ -8,7 +8,10 @@ MVP は単一家族（家庭内利用）を前提とし、家族IDはシーー�
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
+
+from fastapi import Request
 
 from curioquest.audio import SpeechToText, TextToSpeech
 from curioquest.config import Settings, settings_from_env
@@ -17,6 +20,18 @@ from curioquest.db.seed import seed_default_data
 from curioquest.db.store import DataStore
 from curioquest.engine import DialogueEngine
 from curioquest.llm.factory import provider_from_settings
+
+API = "/api"
+
+
+def cq(request: Request) -> AppComponents:
+    """リクエスト単位で組み込まれた依存の取り出し。テストは app.state.cq を差し替える。"""
+    return request.app.state.cq
+
+
+def day_or_today(day: str | None) -> str:
+    """日付未指定ならサーバーローカルの今日を返す（テストでは day で固定できる）。"""
+    return day or date.today().isoformat()
 
 
 @dataclass
