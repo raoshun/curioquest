@@ -1,0 +1,16 @@
+# ビルドコンテキストを小さくする。README と lock・pyproject・src は必要なので残す。
+.git
+.venv
+.github
+data
+dist
+docs
+tests
+.pytest_cache
+.ruff_cache
+.coverage
+.env
+.env.*
+__pycache__/
+*.py[cod]
+*.egg-info/
