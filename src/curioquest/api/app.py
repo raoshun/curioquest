@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import hashlib
 from datetime import UTC, datetime
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from curioquest.api.deps import API, AppComponents
 from curioquest.api.deps import cq as _cq
@@ -68,6 +69,10 @@ def _resolve_today_mission(store: DataStore, child: Child, day: str) -> Mission:
     return store.get_mission(chosen.id)
 
 
+# デモ画面（static/index.html）。同じオリジンから API と音声ターンを呼ぶ。
+_STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+
+
 def create_app(components: AppComponents) -> FastAPI:
     """アプリ組み立て。テスト・デモでは組み替えた AppComponents を渡す。"""
     app = FastAPI(title="CurioQuest API", version="0.1.0")
@@ -109,6 +114,14 @@ def create_app(components: AppComponents) -> FastAPI:
         return JSONResponse(status_code=400, content={"detail": str(exc)})
 
     # ------------------------------------------------------------ 基本
+
+    @app.get("/", include_in_schema=False)
+    def demo_page() -> HTMLResponse:
+        """最小検証 Web ページを返す。ファイルは無視されない（GET / は常にこれ）。"""
+        index = _STATIC_DIR / "index.html"
+        if not index.is_file():
+            raise HTTPException(status_code=404, detail="index.html がありません: " + str(index))
+        return HTMLResponse(index.read_bytes(), media_type="text/html; charset=utf-8")
 
     @app.get("/healthz")
     def healthz(request: Request) -> dict[str, str]:

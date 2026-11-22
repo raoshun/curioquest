@@ -8,12 +8,15 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import date, timedelta
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
+from curioquest.api import app as app_module
 from curioquest.api import create_app
-from curioquest.api.deps import AppComponents
+from curioquest.api.deps import AppComponents, build_components
+from curioquest.config import Settings
 from curioquest.db.database import Database
 from curioquest.db.seed import seed_default_data
 from curioquest.db.store import DataStore
@@ -332,3 +335,38 @@ def test_store_value_error_is_400(client: TestClient, monkeypatch: pytest.Monkey
     resp = client.patch(f"/api/children/{child['id']}", json={"nickname": "しんいち"})
     assert resp.status_code == 400
     assert "テスト用の更新失敗" in resp.json()["detail"]
+
+
+# ------------------------------------------------------------ 起動・組み立て
+
+
+def test_root_serves_demo_page(client: TestClient) -> None:
+    """GET / が最小検証 Web ページを同源で返す（音声ターンは同源必須のため）。"""
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/html")
+    assert "マイクにお話し" in resp.text
+    assert "/api/" in resp.text
+
+
+def test_root_not_found_if_static_missing(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """static ディレクトリが無い場合は導出物欠落として 404 で気づかせる。"""
+    monkeypatch.setattr(app_module, "_STATIC_DIR", tmp_path / "missing")
+    resp = client.get("/")
+    assert resp.status_code == 404
+    assert "index.html" in resp.json()["detail"]
+
+
+def test_build_components_creates_standalone_family(tmp_path: Path) -> None:
+    """既定の組み立てはシード済みの家族環境を返す（起動経路のスモーク）。"""
+    components = build_components(Settings(db_path=str(tmp_path / "db.sqlite3")))
+    try:
+        assert components.store.get_family(components.family_id).name
+        assert len(components.store.list_characters()) == 3
+        assert len(components.store.list_missions()) == 3
+        assert components.stt is not None
+        assert components.tts is not None
+    finally:
+        components.store.db.close()
