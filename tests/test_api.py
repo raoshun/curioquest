@@ -41,7 +41,7 @@ class BoomLLM:
 
 
 @pytest.fixture()
-def components() -> AppComponents:
+def voice_components() -> AppComponents:
     db = Database.in_memory()
     db.init_schema()
     store = DataStore(db)
@@ -53,8 +53,8 @@ def components() -> AppComponents:
 
 
 @pytest.fixture()
-def client(components: AppComponents) -> TestClient:
-    return TestClient(create_app(components), raise_server_exceptions=False)
+def client(voice_components: AppComponents) -> TestClient:
+    return TestClient(create_app(voice_components), raise_server_exceptions=False)
 
 
 def make_child(client: TestClient, nickname: str = "たろう") -> dict:
@@ -126,7 +126,7 @@ def test_characters_hide_system_prompt(client: TestClient) -> None:
 
 
 def test_today_mission_is_deterministic_and_persisted(
-    client: TestClient, components: AppComponents
+    client: TestClient, voice_components: AppComponents
 ) -> None:
     child = make_child(client)
     first = client.get("/api/missions/today", params={"child_id": child["id"], "day": DAY})
@@ -135,7 +135,7 @@ def test_today_mission_is_deterministic_and_persisted(
 
     second = client.get("/api/missions/today", params={"child_id": child["id"], "day": DAY}).json()
     assert second["mission"]["id"] == mission_id
-    today = components.store.get_today_mission(child["id"], DAY)
+    today = voice_components.store.get_today_mission(child["id"], DAY)
     assert today is not None and today.id == mission_id
 
     other = client.get("/api/missions/today", params={"child_id": child["id"], "day": OTHER_DAY})
@@ -148,7 +148,7 @@ def test_today_mission_unknown_child_is_404(client: TestClient) -> None:
 
 
 def test_session_full_flow_message_complete_and_reuse(
-    client: TestClient, components: AppComponents
+    client: TestClient, voice_components: AppComponents
 ) -> None:
     child = make_child(client)
     session = start_session(client, child["id"])
@@ -168,7 +168,7 @@ def test_session_full_flow_message_complete_and_reuse(
     body = turn.json()
     assert body["session_id"] == session["session_id"]
     assert body["finished"] is False
-    assert components.store.get_used_seconds(child["id"], DAY) == 30
+    assert voice_components.store.get_used_seconds(child["id"], DAY) == 30
 
     done = client.post(f"/api/sessions/{session['session_id']}/complete")
     assert done.status_code == 200
@@ -189,11 +189,11 @@ def test_session_defaults_day_to_today(client: TestClient) -> None:
     assert resp.status_code == 201
 
 
-def test_session_daily_limit_is_409(client: TestClient, components: AppComponents) -> None:
-    child_id = components.store.create_child(
-        components.family_id, "まるこ", daily_limit_minutes=1
+def test_session_daily_limit_is_409(client: TestClient, voice_components: AppComponents) -> None:
+    child_id = voice_components.store.create_child(
+        voice_components.family_id, "まるこ", daily_limit_minutes=1
     ).id
-    components.store.add_used_seconds(child_id, DAY, 61)
+    voice_components.store.add_used_seconds(child_id, DAY, 61)
     resp = client.post("/api/sessions", json={"child_id": child_id, "day": DAY})
     assert resp.status_code == 409
     body = resp.json()
@@ -207,9 +207,9 @@ def test_session_unknown_mission_is_404(client: TestClient) -> None:
     assert resp.status_code == 404
 
 
-def test_llm_failure_is_502(client: TestClient, components: AppComponents) -> None:
+def test_llm_failure_is_502(client: TestClient, voice_components: AppComponents) -> None:
     client.app.state.cq = replace(
-        components, engine=DialogueEngine(store=components.store, llm=BoomLLM())
+        voice_components, engine=DialogueEngine(store=voice_components.store, llm=BoomLLM())
     )
     child = make_child(client)
     resp = client.post("/api/sessions", json={"child_id": child["id"], "day": DAY})
@@ -217,14 +217,14 @@ def test_llm_failure_is_502(client: TestClient, components: AppComponents) -> No
     assert "Ollama" in resp.json()["detail"]
 
 
-def test_stamps_available_and_earned(client: TestClient, components: AppComponents) -> None:
+def test_stamps_available_and_earned(client: TestClient, voice_components: AppComponents) -> None:
     child = make_child(client)
     initial = client.get(f"/api/children/{child['id']}/stamps").json()
     assert initial["available"] == 6
     assert initial["earned"] == 0
     assert initial["stamps"] == []
 
-    components.store.award_stamp(child["id"], "stamp_first_step")
+    voice_components.store.award_stamp(child["id"], "stamp_first_step")
     earned = client.get(f"/api/children/{child['id']}/stamps").json()
     assert earned["earned"] == 1
     assert earned["stamps"][0]["id"] == "stamp_first_step"
@@ -235,11 +235,11 @@ def test_stamps_unknown_child_is_404(client: TestClient) -> None:
     assert client.get("/api/children/ghost/stamps").status_code == 404
 
 
-def test_memories_filter(client: TestClient, components: AppComponents) -> None:
+def test_memories_filter(client: TestClient, voice_components: AppComponents) -> None:
     child = make_child(client)
     assert client.get(f"/api/children/{child['id']}/memories").json() == []
-    components.store.add_memory(child["id"], type=MemoryType.INTEREST, content="ぞう")
-    components.store.add_memory(child["id"], type=MemoryType.KNOWLEDGE, content="かみなり")
+    voice_components.store.add_memory(child["id"], type=MemoryType.INTEREST, content="ぞう")
+    voice_components.store.add_memory(child["id"], type=MemoryType.KNOWLEDGE, content="かみなり")
 
     all_items = client.get(f"/api/children/{child['id']}/memories").json()
     assert {m["type"] for m in all_items} == {"interest", "knowledge"}
@@ -257,7 +257,9 @@ def test_memories_unknown_child_is_404(client: TestClient) -> None:
     assert client.get("/api/children/ghost/memories").status_code == 404
 
 
-def test_dashboard_aggregates_for_parent(client: TestClient, components: AppComponents) -> None:
+def test_dashboard_aggregates_for_parent(
+    client: TestClient, voice_components: AppComponents
+) -> None:
     child = make_child(client)
     session = start_session(client, child["id"])
     client.post(
@@ -265,7 +267,7 @@ def test_dashboard_aggregates_for_parent(client: TestClient, components: AppComp
         json={"text": "音を発見したよ、仕組みが気になった", "seconds_spent": 42, "day": DAY},
     )
     client.post(f"/api/sessions/{session['session_id']}/complete")
-    components.store.award_stamp(child["id"], "stamp_first_step")
+    voice_components.store.award_stamp(child["id"], "stamp_first_step")
 
     body = client.get("/api/parent/dashboard", params={"day": DAY}).json()
     row = next(r for r in body["children"] if r["child_id"] == child["id"])
@@ -282,7 +284,7 @@ def test_dashboard_aggregates_for_parent(client: TestClient, components: AppComp
     today_row = next(r for r in today["children"] if r["child_id"] == child["id"])
     assert today_row["missions_finished_today"] in {0, 1}
 
-    mission = components.store.get_today_mission(child["id"], DAY)
+    mission = voice_components.store.get_today_mission(child["id"], DAY)
     assert row["today_mission_title"] == mission.title
 
     # 別日は完了を繰り越さない（usage_daily も mission_results も日付台帳）
@@ -304,7 +306,9 @@ def test_dashboard_lists_children_newest_first(client: TestClient) -> None:
     assert [r["nickname"] for r in body["children"]] == ["ふたりめ", "ひとりめ"]
 
 
-def test_delete_history_removes_messages(client: TestClient, components: AppComponents) -> None:
+def test_delete_history_removes_messages(
+    client: TestClient, voice_components: AppComponents
+) -> None:
     child = make_child(client)
     session = start_session(client, child["id"])
     client.post(
@@ -312,7 +316,7 @@ def test_delete_history_removes_messages(client: TestClient, components: AppComp
         json={"text": "テスト", "seconds_spent": 10, "day": DAY},
     )
     assert client.delete(f"/api/children/{child['id']}/history").status_code == 204
-    messages = components.store.db.query(
+    messages = voice_components.store.db.query(
         "SELECT id FROM messages WHERE child_id = ?", (child["id"],)
     )
     assert messages == []

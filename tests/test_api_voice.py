@@ -42,7 +42,7 @@ class BoomTts:
 
 
 @pytest.fixture()
-def components() -> AppComponents:
+def voice_components() -> AppComponents:
     db = Database.in_memory()
     db.init_schema()
     store = DataStore(db)
@@ -53,8 +53,8 @@ def components() -> AppComponents:
     return AppComponents(store=store, engine=engine, family_id=family_id)
 
 
-def make_client(components: AppComponents, **audio) -> TestClient:
-    comp = replace(components, **audio)
+def make_client(voice_components: AppComponents, **audio) -> TestClient:
+    comp = replace(voice_components, **audio)
     return TestClient(create_app(comp), raise_server_exceptions=False)
 
 
@@ -67,9 +67,9 @@ def child_message_count(store: DataStore, child_id: str) -> int:
     return int(row["c"])
 
 
-def test_voice_round_trip_returns_synthesized_wav(components: AppComponents) -> None:
+def test_voice_round_trip_returns_synthesized_wav(voice_components: AppComponents) -> None:
     stt, tts = FakeStt(texts=["ぞうがすき"]), FakeTts()
-    client = make_client(components, stt=stt, tts=tts)
+    client = make_client(voice_components, stt=stt, tts=tts)
     child = client.post("/api/children", json={"nickname": "はな"}).json()
     sess = client.post("/api/sessions", json={"child_id": child["id"], "day": DAY}).json()
 
@@ -87,11 +87,11 @@ def test_voice_round_trip_returns_synthesized_wav(components: AppComponents) -> 
     assert stt.audio_sizes == [len(b"RIFFfake-wav")]
     assert tts.calls[-1]["text"] == body["reply"]
     # 利用時間はテキストターンと同じ台帳に積もる
-    assert components.store.get_used_seconds(child["id"], DAY) == 15
+    assert voice_components.store.get_used_seconds(child["id"], DAY) == 15
 
 
-def test_voice_recognition_failure_does_not_run_turn(components: AppComponents) -> None:
-    client = make_client(components, stt=BoomStt(), tts=FakeTts())
+def test_voice_recognition_failure_does_not_run_turn(voice_components: AppComponents) -> None:
+    client = make_client(voice_components, stt=BoomStt(), tts=FakeTts())
     child = client.post("/api/children", json={"nickname": "はな"}).json()
     sess = client.post("/api/sessions", json={"child_id": child["id"], "day": DAY}).json()
 
@@ -102,12 +102,12 @@ def test_voice_recognition_failure_does_not_run_turn(components: AppComponents) 
     assert resp.status_code == 503
     assert "音声認識" in resp.json()["detail"]
     # 認識できなかった音声でターンも利用時間も消費しない
-    assert child_message_count(components.store, child["id"]) == 0
-    assert components.store.get_used_seconds(child["id"], DAY) == 0
+    assert child_message_count(voice_components.store, child["id"]) == 0
+    assert voice_components.store.get_used_seconds(child["id"], DAY) == 0
 
 
-def test_voice_synthesis_failure_falls_back_to_text(components: AppComponents) -> None:
-    client = make_client(components, stt=FakeStt(texts=["くじらについて"]), tts=BoomTts())
+def test_voice_synthesis_failure_falls_back_to_text(voice_components: AppComponents) -> None:
+    client = make_client(voice_components, stt=FakeStt(texts=["くじらについて"]), tts=BoomTts())
     child = client.post("/api/children", json={"nickname": "はな"}).json()
     sess = client.post("/api/sessions", json={"child_id": child["id"], "day": DAY}).json()
 
@@ -122,12 +122,12 @@ def test_voice_synthesis_failure_falls_back_to_text(components: AppComponents) -
     assert body["audio_wav_b64"] is None
     assert "VOICEVOX" in (body["audio_error"] or "")
     # 合成に失敗しても対話ターンは成立している
-    assert child_message_count(components.store, child["id"]) == 1
+    assert child_message_count(voice_components.store, child["id"]) == 1
 
 
-def test_voice_without_audio_services(components: AppComponents) -> None:
+def test_voice_without_audio_services(voice_components: AppComponents) -> None:
     # 認識が未登録なら入力不能で 503、合成だけ未登録ならテキストを返す
-    no_stt = make_client(components, tts=FakeTts())
+    no_stt = make_client(voice_components, tts=FakeTts())
     child = no_stt.post("/api/children", json={"nickname": "はな"}).json()
     sess = no_stt.post("/api/sessions", json={"child_id": child["id"], "day": DAY}).json()
     url = f"/api/sessions/{sess['session_id']}/voice"
@@ -136,7 +136,7 @@ def test_voice_without_audio_services(components: AppComponents) -> None:
     assert resp.status_code == 503
     assert resp.json()["detail"] == "この設定では音声を入力できません"
 
-    only_tts_missing = make_client(components, stt=FakeStt(texts=["Test"]), tts=None)
+    only_tts_missing = make_client(voice_components, stt=FakeStt(texts=["Test"]), tts=None)
     child = only_tts_missing.post("/api/children", json={"nickname": "はな"}).json()
     sess = only_tts_missing.post("/api/sessions", json={"child_id": child["id"], "day": DAY}).json()
     resp = only_tts_missing.post(
@@ -149,9 +149,9 @@ def test_voice_without_audio_services(components: AppComponents) -> None:
     assert "音声出力" in (body["audio_error"] or "")
 
 
-def test_voice_session_errors_and_validation(components: AppComponents) -> None:
+def test_voice_session_errors_and_validation(voice_components: AppComponents) -> None:
     stt = FakeStt(default_text="Test")
-    client = make_client(components, stt=stt, tts=FakeTts())
+    client = make_client(voice_components, stt=stt, tts=FakeTts())
     child = client.post("/api/children", json={"nickname": "はな"}).json()
     sess = client.post("/api/sessions", json={"child_id": child["id"], "day": DAY}).json()
     url = f"/api/sessions/{sess['session_id']}/voice"
@@ -169,9 +169,9 @@ def test_voice_session_errors_and_validation(components: AppComponents) -> None:
     assert stt.audio_sizes == before + [1]
 
 
-def test_voice_empty_transcript_asks_again(components: AppComponents) -> None:
+def test_voice_empty_transcript_asks_again(voice_components: AppComponents) -> None:
     """認識結果が空ならエンジンの聞き直し経路へ乗り、テキストで応答する。"""
-    client = make_client(components, stt=FakeStt(default_text=""), tts=FakeTts())
+    client = make_client(voice_components, stt=FakeStt(default_text=""), tts=FakeTts())
     child = client.post("/api/children", json={"nickname": "はな"}).json()
     sess = client.post("/api/sessions", json={"child_id": child["id"], "day": DAY}).json()
     resp = client.post(f"/api/sessions/{sess['session_id']}/voice?day={DAY}", content=b"x")
