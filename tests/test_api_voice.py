@@ -15,6 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from curioquest.api import create_app
+from curioquest.api import voice as voice_module
 from curioquest.api.deps import AppComponents
 from curioquest.audio import AudioServiceUnavailable
 from curioquest.audio.fake import FakeStt, FakeTts
@@ -177,3 +178,63 @@ def test_voice_empty_transcript_asks_again(voice_components: AppComponents) -> N
     resp = client.post(f"/api/sessions/{sess['session_id']}/voice?day={DAY}", content=b"x")
     assert resp.status_code == 200
     assert resp.json()["reply"]
+
+
+def _start_session(client) -> tuple[str, str]:
+    child = client.post("/api/children", json={"nickname": "はな"}).json()
+    sess = client.post("/api/sessions", json={"child_id": child["id"], "day": DAY}).json()
+    return child["id"], sess["session_id"]
+
+
+def test_voice_body_over_declared_limit_is_rejected(
+    voice_components: AppComponents, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Content-Length が上限を超えるアップロードは 413 で拒否し、ターンを進めない。"""
+    monkeypatch.setattr(voice_module, "MAX_VOICE_BODY_BYTES", 8)
+    client = make_client(voice_components, stt=FakeStt(texts=["ぞうがすき"]), tts=FakeTts())
+    child_id, session_id = _start_session(client)
+
+    resp = client.post(
+        f"/api/sessions/{session_id}/voice?seconds_spent=10&day={DAY}",
+        content=b"x" * 9,
+    )
+    assert resp.status_code == 413
+    assert "もういっかい" in resp.json()["detail"]
+    assert child_message_count(voice_components.store, child_id) == 0
+    assert voice_components.store.get_used_seconds(child_id, DAY) == 0
+
+
+def test_voice_body_streamed_over_limit_is_rejected(
+    voice_components: AppComponents, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Content-Length なし（chunked）でも実測バイト数で上限を超えたら 413 にする。"""
+    monkeypatch.setattr(voice_module, "MAX_VOICE_BODY_BYTES", 8)
+    client = make_client(voice_components, stt=FakeStt(texts=["ぞうがすき"]), tts=FakeTts())
+    child_id, session_id = _start_session(client)
+
+    def chunks():
+        yield b"x" * 5
+        yield b"x" * 5
+
+    resp = client.post(
+        f"/api/sessions/{session_id}/voice?seconds_spent=10&day={DAY}",
+        content=chunks(),
+    )
+    assert resp.status_code == 413
+    assert child_message_count(voice_components.store, child_id) == 0
+
+
+def test_voice_body_exactly_at_limit_is_accepted(
+    voice_components: AppComponents, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """上限ちょうど（超えない）は従来どおり受理する。"""
+    monkeypatch.setattr(voice_module, "MAX_VOICE_BODY_BYTES", 8)
+    client = make_client(voice_components, stt=FakeStt(texts=["ぞうがすき"]), tts=FakeTts())
+    child_id, session_id = _start_session(client)
+
+    resp = client.post(
+        f"/api/sessions/{session_id}/voice?seconds_spent=10&day={DAY}",
+        content=b"x" * 8,
+    )
+    assert resp.status_code == 200
+    assert voice_components.store.get_used_seconds(child_id, DAY) == 10
