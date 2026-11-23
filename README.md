@@ -67,6 +67,7 @@ docker compose up --build
 ```
 
 - 子アプリ: `http://localhost:8000/`（検証用デモページ。API は `/api/*`、API ドキュメントは `/docs`）。ホスト側で 8000 が既に使われていて競合する場合は、`.env` の `CQ_HOST_PORT=8080` のように変更して `docker compose up -d` でコンテナを作り直す（`CURIOQUEST_PORT` はモノリス direct 起動専用で、compose のホストポートは変わらない）
+- 日誌と日次クエストの日付境界はコンテナ内 TZ 基準（既定 `Asia/Tokyo`、`.env` の `CQ_TZ` で変更）。モノリス direct 起動ではホストの TZ がそのまま使われる
 - LLM はデフォルトでホスト側の Ollama（`host.docker.internal:11434/v1`）を使う。LOCAL LLM（vLLM 等）に合わせて `.env` の `CURIOQUEST_LLM_BASE_URL` / `CURIOQUEST_LLM_MODEL` を設定する
 - VOICEVOX Engine は compose 内で併走し、ホストには公開しない。STT（faster-whisper）はバックエンドプロセス内に組み込まれており、認識モデルは named volume にキャッシュする
 

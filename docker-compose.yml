@@ -11,6 +11,8 @@ services:
       # 検定済みの既定は 8000。共有マシンで競合するときだけ CQ_HOST_PORT で退避できる
       - "127.0.0.1:${CQ_HOST_PORT:-8000}:8000"
     environment:
+      # 日誌・日次クエストの日付境界の基準（既定 JST。CQ_TZ で家族の TZ に変更可）。
+      TZ: ${CQ_TZ:-Asia/Tokyo}
       # ホスト側のローカル LLM（Ollama 等）をデフォルトにする。上書きは .env で。
       # API キー未設定時に空文字が渡るように :-) 修飾を付ける（空はヘッダ非送信）。
       CURIOQUEST_LLM_BASE_URL: ${CURIOQUEST_LLM_BASE_URL:-http://host.docker.internal:11434/v1}

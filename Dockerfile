@@ -9,6 +9,14 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 WORKDIR /app
 
+# 日誌・日次クエストの日付境界を家族のタイムゾーン基準にするため tzdata を導入
+# （slim イメージは tzdata 欠けで、無いと glibc が TZ を黙って無視する）。
+# 既定 Asia/Tokyo。上書きは compose の CQ_TZ 環境変数経由で。
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends tzdata \
+    && rm -rf /var/lib/apt/lists/*
+ENV TZ=Asia/Tokyo
+
 # 依存だけ先にインストール（uv.lock がレイヤキャッシュの鍵）。
 # [stt] 込みでもモデルのダウンロードは発生せず、接続は初回認識時のみ。
 RUN --mount=type=cache,target=/root/.cache/uv \
