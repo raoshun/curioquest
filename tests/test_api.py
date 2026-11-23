@@ -20,7 +20,7 @@ from curioquest.config import ENV_MISSION_GENERATION, Settings, settings_from_en
 from curioquest.db.database import Database
 from curioquest.db.seed import DEFAULT_MISSIONS, seed_default_data
 from curioquest.db.store import DataStore
-from curioquest.domain.models import MemoryType
+from curioquest.domain.models import MemoryType, ThinkingSignal
 from curioquest.engine import DailyMissionPlanner, DialogueEngine
 from curioquest.llm.base import LLMError
 from curioquest.llm.fake import FakeLLM
@@ -399,3 +399,102 @@ def test_mission_generation_flag_can_be_disabled_with_env(
     for raw in ("1", "TRUE", "yes", "on"):
         monkeypatch.setenv(ENV_MISSION_GENERATION, raw)
         assert settings_from_env().mission_generation_enabled is True
+
+
+def finish_session(client: TestClient, child_id: str, text: str) -> dict:
+    """今日のミッションで1ターン会話して「共有できた」で終える。"""
+    session = start_session(client, child_id)
+    resp = client.post(
+        f"/api/sessions/{session['session_id']}/message",
+        json={"text": text, "seconds_spent": 30, "day": DAY},
+    )
+    assert resp.status_code == 200, resp.text
+    done = client.post(f"/api/sessions/{session['session_id']}/complete")
+    assert done.status_code == 200, done.text
+    return session
+
+
+def test_child_progress_shows_remaining_time(client: TestClient) -> None:
+    child = make_child(client)
+    fresh = client.get(f"/api/children/{child['id']}/progress", params={"day": DAY})
+    assert fresh.status_code == 200, fresh.text
+    body = fresh.json()
+    assert body["day"] == DAY
+    assert body["today_mission"] is None
+    assert body["daily_limit_minutes"] == 20
+    assert body["used_seconds_today"] == 0
+    assert body["remaining_seconds"] == 20 * 60
+    assert body["missions_finished_today"] == 0
+    assert body["missions_finished_total"] == 0
+
+    finish_session(client, child["id"], "音を発見したよ、仕組みが気になった")
+    body = client.get(f"/api/children/{child['id']}/progress", params={"day": DAY}).json()
+    assert body["today_mission"] is not None
+    assert body["today_mission"]["title"]
+    assert body["used_seconds_today"] == 30
+    assert body["remaining_seconds"] == 20 * 60 - 30
+    assert body["missions_finished_today"] in {0, 1}  # UTC とローカルの日付境界
+    assert body["missions_finished_total"] == 1
+
+
+def test_child_progress_unknown_child_is_404(client: TestClient) -> None:
+    assert client.get("/api/children/nobody/progress").status_code == 404
+
+
+def test_unknown_child_conversations_is_404(client: TestClient) -> None:
+    assert client.get("/api/children/nobody/conversations").status_code == 404
+
+
+def test_child_conversations_lists_finished_sessions_newest_first(client: TestClient) -> None:
+    child = make_child(client)
+    assert client.get(f"/api/children/{child['id']}/conversations").json() == []
+
+    first = finish_session(client, child["id"], "最初は火山の話")
+    second = finish_session(client, child["id"], "次は海の生き物の話")
+    rows = client.get(f"/api/children/{child['id']}/conversations").json()
+    assert [row["id"] for row in rows] == [second["session_id"], first["session_id"]]
+    for row in rows:
+        assert row["mission_title"]
+        assert row["ended_at"] is not None
+        assert row["end_reason"] in {"shared_idea", "child_exit"}
+        assert row["turn_count"] >= 1
+
+    # 途中の会話は一覧に出さない（「つづき」側が担当する）
+    start_session(client, child["id"])
+    assert len(client.get(f"/api/children/{child['id']}/conversations").json()) == 2
+
+    limited = client.get(f"/api/children/{child['id']}/conversations", params={"limit": 1}).json()
+    assert [row["id"] for row in limited] == [second["session_id"]]
+    assert (
+        client.get(f"/api/children/{child['id']}/conversations", params={"limit": 0}).status_code
+        == 422
+    )
+
+
+def test_dashboard_shows_what_parent_wants_to_know(
+    client: TestClient, voice_components: AppComponents
+) -> None:
+    child = make_child(client)
+    session = finish_session(client, child["id"], "安土城をつくりたかった")
+    store = voice_components.store
+    store.add_memory(child["id"], MemoryType.INTEREST, "また行きたい", topic="お城", source="t")
+    store.add_memory(child["id"], MemoryType.INTEREST, "天守閣がすごい", topic="お城", source="t")
+    store.add_memory(child["id"], MemoryType.PREFERENCE, "雪", source="t")
+    store.add_thinking_record(
+        child["id"],
+        session["session_id"],
+        turn_index=1,
+        signals=[ThinkingSignal.HYPOTHESIS],
+        summary="城が溶ける理由",
+    )
+
+    row = client.get("/api/parent/dashboard", params={"day": DAY}).json()["children"][0]
+    assert {"topic": "お城", "count": 2} in row["interests"]
+    assert {"topic": "雪", "count": 1} in row["interests"]
+    thinking = row["recent_thinking"][0]
+    assert thinking["summary"] == "城が溶ける理由"
+    assert thinking["signals"] == ["hypothesis"]
+    mission = store.get_today_mission(child["id"], DAY)
+    assert row["recent_missions"][0]["mission_title"] == mission.title
+    assert row["recent_missions"][0]["outcome"] in {"completed", "child_exit"}
+    assert row["recent_conversations"][0]["id"] == session["session_id"]

@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -20,20 +21,25 @@ from curioquest.api.schemas import (
     ChildCreate,
     ChildOut,
     ChildPatch,
+    ChildProgressOut,
+    ConversationOut,
     DashboardChildOut,
     DashboardOut,
+    InterestOut,
     MemoryOut,
     MessageIn,
+    MissionHistoryOut,
     MissionOut,
     SessionStart,
     StampOut,
     StampsOut,
+    ThinkingOut,
     TodayOut,
     TurnOut,
     character_out,
 )
 from curioquest.api.voice import add_voice_routes
-from curioquest.db.store import NotFound
+from curioquest.db.store import DataStore, NotFound
 from curioquest.domain.models import Child, MemoryType, Mission
 from curioquest.engine import DailyLimitExceeded, SessionClosed
 from curioquest.llm import LLMError
@@ -51,6 +57,42 @@ def _resolve_today_mission(comp: AppComponents, child: Child, day: str) -> Missi
 
 # デモ画面（static/index.html）。同じオリジンから API と音声ターンを呼ぶ。
 _STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+
+
+_RECENT_VIEW_LIMIT = 5
+
+
+def _progress_of(store: DataStore, child: Child, day: str) -> ChildProgressOut:
+    """今日進行状況の共通算出。子画面と保護者画面で同じ数字を出すために寄せる。"""
+    results = store.list_mission_results(child.id)
+    used = store.get_used_seconds(child.id, day)
+    limit = child.daily_limit_minutes
+    mission = store.get_today_mission(child.id, day)
+    return ChildProgressOut(
+        day=day,
+        today_mission=MissionOut.from_domain(mission) if mission else None,
+        used_seconds_today=used,
+        daily_limit_minutes=limit,
+        remaining_seconds=max(limit * 60 - used, 0) if limit > 0 else None,
+        missions_finished_today=sum(
+            1 for result in results if to_utc_day(result.finished_at) == day
+        ),
+        missions_finished_total=len(results),
+        stamps_earned=len(store.list_child_stamps(child.id)),
+    )
+
+
+def _top_interests(
+    store: DataStore, child_id: str, limit: int = _RECENT_VIEW_LIMIT
+) -> list[InterestOut]:
+    """記憶と「好きなこと」から今いちばん気にしている話題を数え上げる (6-3)。"""
+    counts: Counter[str] = Counter()
+    for memory in store.list_memories(child_id):
+        if memory.topic:
+            counts[memory.topic] += 1
+        elif memory.type is MemoryType.PREFERENCE:
+            counts[memory.content] += 1
+    return [InterestOut(topic=topic, count=count) for topic, count in counts.most_common(limit)]
 
 
 def create_app(components: AppComponents) -> FastAPI:
@@ -220,28 +262,69 @@ def create_app(components: AppComponents) -> FastAPI:
             ) from exc
         return [MemoryOut.from_domain(m) for m in store.list_memories(child_id, type=resolved)]
 
+    @app.get(f"{API}/children/{{child_id}}/progress", response_model=ChildProgressOut)
+    def get_child_progress(
+        child_id: str, request: Request, day: str | None = Query(default=None)
+    ) -> ChildProgressOut:
+        """今日やること・残り時間。子画面ホームと保護者画面が同じ数字を読む (AC-04)。"""
+        comp = _cq(request)
+        child = comp.store.get_child(child_id)  # 存在確認
+        return _progress_of(comp.store, child, _day_or_today(day))
+
+    @app.get(f"{API}/children/{{child_id}}/conversations", response_model=list[ConversationOut])
+    def get_child_conversations(
+        child_id: str, request: Request, limit: int = Query(default=30, ge=1, le=200)
+    ) -> list[ConversationOut]:
+        """会話一覧（いつ・どのミッションを・何ターン）。保護者画面 9-2 の行。"""
+        store = _cq(request).store
+        store.get_child(child_id)  # 存在確認
+        return [
+            ConversationOut.from_summary(summary)
+            for summary in store.list_session_summaries(child_id, limit=limit)
+        ]
+
     @app.get(f"{API}/parent/dashboard", response_model=DashboardOut)
     def parent_dashboard(request: Request, day: str | None = Query(default=None)) -> DashboardOut:
+        """保護者画面の主データ。進行状況に加えて興味・考え・最近の記録を一括で出す。"""
         comp = _cq(request)
         store = comp.store
         resolved_day = _day_or_today(day)
+        mission_titles = {mission.id: mission.title for mission in store.list_missions()}
         rows: list[DashboardChildOut] = []
         for child in store.list_children(comp.family_id):
-            mission = store.get_today_mission(child.id, resolved_day)
-            finished_today = sum(
-                1
-                for result in store.list_mission_results(child.id)
-                if to_utc_day(result.finished_at) == resolved_day
-            )
+            progress = _progress_of(store, child, resolved_day)
             rows.append(
                 DashboardChildOut(
                     child_id=child.id,
                     nickname=child.nickname,
-                    today_mission_title=mission.title if mission else None,
-                    used_seconds_today=store.get_used_seconds(child.id, resolved_day),
-                    daily_limit_minutes=child.daily_limit_minutes,
-                    missions_finished_today=finished_today,
-                    stamps_earned=len(store.list_child_stamps(child.id)),
+                    today_mission_title=(
+                        progress.today_mission.title if progress.today_mission else None
+                    ),
+                    used_seconds_today=progress.used_seconds_today,
+                    daily_limit_minutes=progress.daily_limit_minutes,
+                    missions_finished_today=progress.missions_finished_today,
+                    stamps_earned=progress.stamps_earned,
+                    interests=_top_interests(store, child.id),
+                    recent_thinking=[
+                        ThinkingOut.from_record(record)
+                        for record in list(reversed(store.list_thinking_records(child.id)))[
+                            :_RECENT_VIEW_LIMIT
+                        ]
+                    ],
+                    recent_missions=[
+                        MissionHistoryOut.from_result(
+                            result,
+                            mission_titles.get(result.mission_id, result.mission_id),
+                            to_utc_day(result.finished_at),
+                        )
+                        for result in store.list_mission_results(child.id)[:_RECENT_VIEW_LIMIT]
+                    ],
+                    recent_conversations=[
+                        ConversationOut.from_summary(summary)
+                        for summary in store.list_session_summaries(
+                            child.id, limit=_RECENT_VIEW_LIMIT
+                        )
+                    ],
                 )
             )
         return DashboardOut(day=resolved_day, children=rows)
