@@ -181,6 +181,21 @@ class MissionResult:
 
 
 @dataclass
+class ConversationSummary:
+    """会話一覧に出す要約。保護者画面の「いつ・何をしたか」の行になる (9-2)。"""
+
+    id: str
+    child_id: str
+    mission_id: str
+    mission_title: str
+    character_id: str
+    started_at: str | None
+    ended_at: str | None
+    end_reason: MissionEndReason | None
+    turn_count: int
+
+
+@dataclass
 class Memory:
     id: str
     child_id: str
