@@ -18,7 +18,7 @@ from curioquest.api import create_app
 from curioquest.api.deps import AppComponents, build_components
 from curioquest.config import Settings
 from curioquest.db.database import Database
-from curioquest.db.seed import seed_default_data
+from curioquest.db.seed import DEFAULT_MISSIONS, seed_default_data
 from curioquest.db.store import DataStore
 from curioquest.domain.models import MemoryType
 from curioquest.engine import DialogueEngine
@@ -365,7 +365,7 @@ def test_build_components_creates_standalone_family(tmp_path: Path) -> None:
     try:
         assert components.store.get_family(components.family_id).name
         assert len(components.store.list_characters()) == 3
-        assert len(components.store.list_missions()) == 3
+        assert len(components.store.list_missions()) == len(DEFAULT_MISSIONS)
         assert components.stt is not None
         assert components.tts is not None
     finally:
