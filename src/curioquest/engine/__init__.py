@@ -10,14 +10,28 @@ from curioquest.engine.engine import (
     SessionClosed,
     TurnResult,
 )
+from curioquest.engine.missions import (
+    GENERATED_ID_PREFIX,
+    ClassicMissionPlanner,
+    DailyMissionPlanner,
+    MissionPlanner,
+    classic_missions,
+    digest_index,
+)
 from curioquest.engine.rules import ChildIntent, detect_intent, is_asking_for_help
 
 __all__ = [
+    "GENERATED_ID_PREFIX",
     "ChildIntent",
+    "ClassicMissionPlanner",
     "DailyLimitExceeded",
+    "DailyMissionPlanner",
     "DialogueEngine",
+    "MissionPlanner",
     "SessionClosed",
     "TurnResult",
+    "classic_missions",
     "detect_intent",
+    "digest_index",
     "is_asking_for_help",
 ]

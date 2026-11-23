@@ -7,14 +7,12 @@
 
 from __future__ import annotations
 
-import hashlib
-from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from curioquest.api.deps import API, AppComponents
+from curioquest.api.deps import API, AppComponents, resolve_planner
 from curioquest.api.deps import cq as _cq
 from curioquest.api.deps import day_or_today as _day_or_today
 from curioquest.api.schemas import (
@@ -35,38 +33,20 @@ from curioquest.api.schemas import (
     character_out,
 )
 from curioquest.api.voice import add_voice_routes
-from curioquest.db.store import DataStore, NotFound
+from curioquest.db.store import NotFound
 from curioquest.domain.models import Child, MemoryType, Mission
 from curioquest.engine import DailyLimitExceeded, SessionClosed
 from curioquest.llm import LLMError
+from curioquest.utils.dates import to_utc_day
 
 
-def _local_day(finished_at: str) -> str:
-    """SQLite datetime('now') の UTC 時刻文字列をサーバーローカルの日付文字列へ変換する。
+def _resolve_today_mission(comp: AppComponents, child: Child, day: str) -> Mission:
+    """今日のミッションを返す。未割当なら planner が 1 件決めて割当を保存する。
 
-    missions_today や usage_daily はサーバーローカル日付で台帳化しているため、
-    完了時刻も同じ基準へ揃えてから照合する（JST 運用での深夜・早朝のずれ対策）。
+    定番DBの決定的な抽選を土台に、その子の記憶が十分なら個人最適のお題を生成する (6-2, 6-3)。
+    いずれにせよ同じ子・同じ日は絶対に同じお題になる。
     """
-    ts = datetime.strptime(finished_at[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
-    return ts.astimezone().date().isoformat()
-
-
-def _resolve_today_mission(store: DataStore, child: Child, day: str) -> Mission:
-    """今日のミッションを返す。未割当なら子と日付で決定的に 1 件を割り当てて保存する。
-
-    乱数ではなく sha256 の残りなので、同じ子・同じ日なら何度でも同じ
-    ミッションになり、サーバーを再起動しても変わらない（02-features 6-1）。
-    """
-    mission = store.get_today_mission(child.id, day)
-    if mission is not None:
-        return mission
-    missions = store.list_missions()
-    if not missions:
-        raise NotFound("missions")
-    digest = hashlib.sha256(f"{child.id}:{day}".encode()).hexdigest()
-    chosen = missions[int(digest, 16) % len(missions)]
-    store.set_today_mission(child.family_id, child.id, day, chosen.id)
-    return store.get_mission(chosen.id)
+    return resolve_planner(comp).plan(child, day)
 
 
 # デモ画面（static/index.html）。同じオリジンから API と音声ターンを呼ぶ。
@@ -179,7 +159,7 @@ def create_app(components: AppComponents) -> FastAPI:
         comp = _cq(request)
         child = comp.store.get_child(child_id)
         resolved_day = _day_or_today(day)
-        mission = _resolve_today_mission(comp.store, child, resolved_day)
+        mission = _resolve_today_mission(comp, child, resolved_day)
         return TodayOut(day=resolved_day, mission=MissionOut.from_domain(mission))
 
     @app.post(f"{API}/sessions", response_model=TurnOut, status_code=201)
@@ -190,7 +170,7 @@ def create_app(components: AppComponents) -> FastAPI:
         if body.mission_id is not None:
             mission = comp.store.get_mission(body.mission_id)
         else:
-            mission = _resolve_today_mission(comp.store, child, resolved_day)
+            mission = _resolve_today_mission(comp, child, resolved_day)
         character_id = body.character_id or mission.character_id
         result = comp.engine.start_session(child.id, mission.id, character_id, day=resolved_day)
         return TurnOut.from_result(result)
@@ -251,7 +231,7 @@ def create_app(components: AppComponents) -> FastAPI:
             finished_today = sum(
                 1
                 for result in store.list_mission_results(child.id)
-                if result.finished_at and _local_day(result.finished_at) == resolved_day
+                if to_utc_day(result.finished_at) == resolved_day
             )
             rows.append(
                 DashboardChildOut(

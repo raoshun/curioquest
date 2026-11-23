@@ -16,12 +16,12 @@ from fastapi.testclient import TestClient
 from curioquest.api import app as app_module
 from curioquest.api import create_app
 from curioquest.api.deps import AppComponents, build_components
-from curioquest.config import Settings
+from curioquest.config import ENV_MISSION_GENERATION, Settings, settings_from_env
 from curioquest.db.database import Database
 from curioquest.db.seed import DEFAULT_MISSIONS, seed_default_data
 from curioquest.db.store import DataStore
 from curioquest.domain.models import MemoryType
-from curioquest.engine import DialogueEngine
+from curioquest.engine import DailyMissionPlanner, DialogueEngine
 from curioquest.llm.base import LLMError
 from curioquest.llm.fake import FakeLLM
 
@@ -370,3 +370,32 @@ def test_build_components_creates_standalone_family(tmp_path: Path) -> None:
         assert components.tts is not None
     finally:
         components.store.db.close()
+
+
+def test_build_components_wires_daily_planner(tmp_path: Path) -> None:
+    """既定の組み立ては LLM 付きの DailyMissionPlanner を接続する。"""
+    components = build_components(Settings(db_path=str(tmp_path / "db.sqlite3")))
+    try:
+        planner = components.planner
+        assert isinstance(planner, DailyMissionPlanner)
+        assert planner.llm is components.engine.llm
+        assert planner.generation_enabled is True
+        assert planner.store is components.store
+    finally:
+        components.store.db.close()
+
+
+def test_mission_generation_flag_can_be_disabled_with_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CURIOQUEST_MISSION_GENERATION での生成の ON/OFF を設定に反映する。"""
+    monkeypatch.delenv(ENV_MISSION_GENERATION, raising=False)
+    assert settings_from_env().mission_generation_enabled is True
+
+    for raw, expected in (("0", False), ("false", False), ("NO", False), ("off", False)):
+        monkeypatch.setenv(ENV_MISSION_GENERATION, raw)
+        assert settings_from_env().mission_generation_enabled is expected
+
+    for raw in ("1", "TRUE", "yes", "on"):
+        monkeypatch.setenv(ENV_MISSION_GENERATION, raw)
+        assert settings_from_env().mission_generation_enabled is True
