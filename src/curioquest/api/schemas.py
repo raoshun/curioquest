@@ -1,7 +1,7 @@
-"""REST API のリクエスト・レスポンスモデル（03-architecture 12）。
+"""REST API のリクエスト・レスポンスモデル(03-architecture 12)。
 
-ドメインモデルをそのまま晒さず、API として安定した形（enum は文字列、
-内部専用料理除外）へ変換する境界にする。
+ドメインモデルをそのまま晒さず、API として安定した形(enum は文字列、
+内部専用料理除外)へ変換する境界にする。
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from curioquest.engine import TurnResult
 
 
 class ChildCreate(BaseModel):
-    """子どもの登録（保護者画面から）。「声でスタート」は 1 画面 1 タップで済むことを優先し、
+    """子どもの登録(保護者画面から)。「声でスタート」は 1 画面 1 タップで済むことを優先し、
     ニックネーム以外すべて省略可能とする。"""
 
     nickname: str = Field(min_length=1, max_length=40)
@@ -35,7 +35,7 @@ class ChildCreate(BaseModel):
 
 
 class ChildPatch(BaseModel):
-    """子どもの更新。変更する項目だけを渡す（PATCH 意味論）。"""
+    """子どもの更新。変更する項目だけを渡す(PATCH 意味論)。"""
 
     nickname: str | None = Field(default=None, min_length=1, max_length=40)
     birthday: str | None = None
@@ -171,7 +171,7 @@ class VoiceOut(TurnOut):
     def from_turn(
         cls, turn: TurnOut, wav: bytes | None, audio_error: str | None = None
     ) -> VoiceOut:
-        """テキストターン結果に合成音（WAV バイト列）を添えて組み立てる。
+        """テキストターン結果に合成音(WAV バイト列)を添えて組み立てる。
 
         wav が None のときは audio_error があってもテキストの応答は有効なので、
         finished や reply などの対話結果はそのまま返す。

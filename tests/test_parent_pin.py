@@ -1,4 +1,4 @@
-"""保護者エリアの PIN 保護のテスト（02-features 3-3）。
+"""保護者エリアの PIN 保護のテスト(02-features 3-3)。
 
 テストは専用に作っている。インメモリ DB + FakeLLM の AppComponents を組み、
 HTTP のステータスコード・Cookie 通過後の挙動・失敗時のロック・PIN 変更時の

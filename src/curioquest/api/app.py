@@ -1,8 +1,8 @@
-"""FastAPI アプリケーション組成（03-architecture 12 のコントラクト）。
+"""FastAPI アプリケーション組成(03-architecture 12 のコントラクト)。
 
 テキスト入力・取得だけを扱う受付。ここで事業ロジックの判断はせず、
 エンジン・データストアを呼び、ドメイン例外を HTTP ステータスへ変換するだけにする。
-ノイズを伴う 1 ターン（voice API）は voice.py に分離する。
+ノイズを伴う 1 ターン(voice API)は voice.py に分離する。
 """
 
 from __future__ import annotations
@@ -64,7 +64,7 @@ def _resolve_today_mission(comp: AppComponents, child: Child, day: str) -> Missi
     return resolve_planner(comp).plan(child, day)
 
 
-# デモ画面（static/index.html）。同じオリジンから API と音声ターンを呼ぶ。
+# デモ画面(static/index.html)。同じオリジンから API と音声ターンを呼ぶ。
 _STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 
@@ -145,7 +145,7 @@ def create_app(components: AppComponents) -> FastAPI:
     """アプリ組み立て。テスト・デモでは組み替えた AppComponents を渡す。"""
     app = FastAPI(title="CurioQuest API", version="0.1.0")
     app.state.cq = components
-    # 保護者エリアの PIN は 1 家族 1 件（設定はストアの setting に保存）
+    # 保護者エリアの PIN は 1 家族 1 件(設定はストアの setting に保存)
     app.state.parent_auth = ParentAuth(components.store, components.family_id)
 
     # ------------------------------------------------------------ 例外処理
@@ -194,7 +194,7 @@ def create_app(components: AppComponents) -> FastAPI:
 
     @app.get("/", include_in_schema=False)
     def demo_page() -> HTMLResponse:
-        """最小検証 Web ページを返す。ファイルは無視されない（GET / は常にこれ）。"""
+        """最小検証 Web ページを返す。ファイルは無視されない(GET / は常にこれ)。"""
         index = _STATIC_DIR / "index.html"
         if not index.is_file():
             raise HTTPException(status_code=404, detail="index.html がありません: " + str(index))
@@ -202,7 +202,7 @@ def create_app(components: AppComponents) -> FastAPI:
 
     @app.get("/healthz")
     def healthz(request: Request) -> dict[str, str]:
-        """生存確認（コンテナのヘルスチェック用）。DB には触れない。"""
+        """生存確認(コンテナのヘルスチェック用)。DB には触れない。"""
         assert _cq(request) is not None
         return {"status": "ok"}
 
@@ -238,10 +238,10 @@ def create_app(components: AppComponents) -> FastAPI:
 
     @app.delete(f"{API}/children/{{child_id}}/history", status_code=204)
     def delete_history(child_id: str, request: Request) -> None:
-        """保護者が会話履歴だけを削除する（03-architecture 11 親権対応）。"""
+        """保護者が会話履歴だけを削除する(03-architecture 11 親権対応)。"""
         _require_parent(request)
         store = _cq(request).store
-        store.get_child(child_id)  # 存在確認（無ければ 404）
+        store.get_child(child_id)  # 存在確認(無ければ 404)
         store.delete_history_for_child(child_id)
         return None
 
@@ -333,7 +333,7 @@ def create_app(components: AppComponents) -> FastAPI:
     def get_child_conversations(
         child_id: str, request: Request, limit: int = Query(default=30, ge=1, le=200)
     ) -> list[ConversationOut]:
-        """会話一覧（いつ・どのミッションを・何ターン）。保護者画面 9-2 の行。"""
+        """会話一覧(いつ・どのミッションを・何ターン)。保護者画面 9-2 の行。"""
         _require_parent(request)
         store = _cq(request).store
         store.get_child(child_id)  # 存在確認
@@ -344,7 +344,7 @@ def create_app(components: AppComponents) -> FastAPI:
 
     @app.get(f"{API}/parent/pin/status", response_model=PinStatusOut)
     def get_pin_status(request: Request) -> PinStatusOut:
-        """PIN が設定済みか・今この端末が保護者認証済みか（保護者画面の入口表示用）。"""
+        """PIN が設定済みか・今この端末が保護者認証済みか(保護者画面の入口表示用)。"""
         auth = _parent_auth(request)
         return PinStatusOut(
             is_set=auth.is_set(), authenticated=auth.authenticated(request.cookies.get(PIN_COOKIE))
@@ -352,7 +352,7 @@ def create_app(components: AppComponents) -> FastAPI:
 
     @app.post(f"{API}/parent/pin", responses={403: {"description": "すでに PIN 設定済み"}})
     def setup_pin(body: PinIn, request: Request) -> JSONResponse:
-        """はじめての PIN 設定。設定済みならこのルートでは変更できない（変更は /change）。"""
+        """はじめての PIN 設定。設定済みならこのルートでは変更できない(変更は /change)。"""
         auth = _parent_auth(request)
         if auth.is_set():
             raise HTTPException(
