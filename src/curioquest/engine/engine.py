@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -107,8 +108,21 @@ class DialogueEngine:
     idle_timeout_seconds: float = 120.0
     _clock: Callable[[], float] = field(default=time.monotonic, repr=False)
     _last_activity: dict[str, float] = field(default_factory=dict, repr=False)
+    # 同一セッションの並行リクエスト（スレッドプール実行）による状態遷移の
+    # 多重実行を防ぐ。セッショングランユリのロックで、別セッションは並行まま。
+    _session_locks: dict[str, threading.Lock] = field(default_factory=dict, repr=False, init=False)
+    _locks_guard: threading.Lock = field(default_factory=threading.Lock, repr=False, init=False)
 
     # ------------------------------------------------------------------ API
+
+    def _gate(self, session_id: str) -> threading.Lock:
+        """セッションごとの直列化ロックを取得（生成はガードロック下で行う）。"""
+        with self._locks_guard:
+            lock = self._session_locks.get(session_id)
+            if lock is None:
+                lock = threading.Lock()
+                self._session_locks[session_id] = lock
+            return lock
 
     def start_session(
         self,
@@ -147,7 +161,21 @@ class DialogueEngine:
         seconds_spent: int = 0,
         day: date | str | None = None,
     ) -> TurnResult:
-        """子どもの発話 1 件を処理し、状態遷移・記録・応答生成を行う。"""
+        """子どもの発話 1 件を処理する。同一セッション内は直列化して実行する。"""
+        with self._gate(session_id):
+            return self._handle_turn_unlocked(
+                session_id, text, seconds_spent=seconds_spent, day=day
+            )
+
+    def _handle_turn_unlocked(
+        self,
+        session_id: str,
+        text: str,
+        *,
+        seconds_spent: int = 0,
+        day: date | str | None = None,
+    ) -> TurnResult:
+        """状態遷移・記録・応答生成本体（セッション ゲート保持済みで呼ぶ）。"""
         session = self.store.get_session(session_id)
         if not session.is_active:
             raise SessionClosed(session.id)
@@ -209,6 +237,17 @@ class DialogueEngine:
 
         活動記録がないセッションは現在時刻で初期化するだけで終了しない。
         """
+        with self._gate(session_id):
+            return self._maybe_idle_unlocked(session_id, now=now, idle_seconds=idle_seconds)
+
+    def _maybe_idle_unlocked(
+        self,
+        session_id: str,
+        *,
+        now: float | None = None,
+        idle_seconds: float | None = None,
+    ) -> TurnResult | None:
+        """経過時間判定・終了化本体（セッション ゲート保持済みで呼ぶ）。"""
         session = self.store.get_session(session_id)
         if not session.is_active:
             return None
@@ -225,8 +264,13 @@ class DialogueEngine:
     def complete(self, session_id: str) -> TurnResult:
         """「おしまい」ボタンなど、発話を介さない明示的なミッション終了（03 12）。
 
-        終了理由は CHILD_EXIT として保存する。
+        終了理由は CHILD_EXIT として保存する。同一セッション内は直列化して実行する。
         """
+        with self._gate(session_id):
+            return self._complete_unlocked(session_id)
+
+    def _complete_unlocked(self, session_id: str) -> TurnResult:
+        """終了処理本体（セッション ゲート保持済みで呼ぶ）。"""
         session = self.store.get_session(session_id)
         if not session.is_active:
             raise SessionClosed(session.id)

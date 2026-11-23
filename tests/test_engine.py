@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+import time
 from datetime import date
 
 import pytest
@@ -246,3 +248,46 @@ def test_maybe_idle_closes_session_after_window(store: DataStore) -> None:
     assert turn.session.end_reason is MissionEndReason.IDLE
     assert store.list_mission_results(kid.id)[-1].outcome is MissionOutcome.IDLE
     assert engine.maybe_idle(result.session.id) is None
+
+
+class _SlowLLM(FakeLLM):
+    """応答生成に意図的に待ち時間を入れ、並行ターンが干渉しやすくする（テスト専用）。"""
+
+    def generate_response(self, messages, schema=None, *, temperature=None):  # type: ignore[no-untyped-def]
+        time.sleep(0.05)
+        return super().generate_response(messages, schema=schema, temperature=temperature)
+
+
+def test_concurrent_same_session_turns_are_serialized(store: DataStore) -> None:
+    """同一セッションへの同時リクエストでも状態上限・終了処理が多重実行されないこと。"""
+    llm = _SlowLLM(default_response="いいねえ。どうしてだと思う？")
+    kid, engine, started = start(store, llm)
+    session_id = started.session.id
+    errors: list[BaseException] = []
+    barrier = threading.Barrier(5)
+
+    def send(i: int) -> None:
+        try:
+            barrier.wait(timeout=5)
+            engine.handle_turn(session_id, f"そらが あおいよ {i}", seconds_spent=1)
+        except BaseException as exc:  # noqa: BLE001 - スレッド内の例外は主手で確認する
+            errors.append(exc)
+
+    threads = [threading.Thread(target=send, args=(i,)) for i in range(5)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=15)
+    assert not any(t.is_alive() for t in threads), "ターン処理が完了しない"
+    assert errors == []
+
+    messages = store.list_messages(session_id)
+    child_turns = [m for m in messages if m.role is MessageRole.CHILD]
+    assert len(child_turns) == 5
+    # 深掘りは高々 3 回、補足は 1 回、終了は 1 回（直列化で状態が進むことの証明）
+    states = [m.state for m in messages if m.role is MessageRole.ASSISTANT]
+    assert states.count(DialogueState.EXPLORATION) == 3
+    assert states.count(DialogueState.EXPLANATION) == 1
+    assert states.count(DialogueState.COMPLETE) == 1
+    assert not store.get_session(session_id).is_active
+    assert len(store.list_mission_results(kid.id)) == 1
