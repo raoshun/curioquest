@@ -30,6 +30,9 @@ from curioquest.api.schemas import (
     MessageIn,
     MissionHistoryOut,
     MissionOut,
+    PinChangeIn,
+    PinIn,
+    PinStatusOut,
     SessionStart,
     StampOut,
     StampsOut,
@@ -37,6 +40,12 @@ from curioquest.api.schemas import (
     TodayOut,
     TurnOut,
     character_out,
+)
+from curioquest.api.security import (
+    PIN_COOKIE,
+    SESSION_TTL_SECONDS,
+    ParentAuth,
+    PinLocked,
 )
 from curioquest.api.voice import add_voice_routes
 from curioquest.db.store import DataStore, NotFound
@@ -95,10 +104,49 @@ def _top_interests(
     return [InterestOut(topic=topic, count=count) for topic, count in counts.most_common(limit)]
 
 
+def _parent_auth(request: Request) -> ParentAuth:
+    auth: ParentAuth = request.app.state.parent_auth
+    return auth
+
+
+def _require_parent(request: Request) -> None:
+    """PIN が設定されている時だけ、未確認の保護者エリアアクセスを締める (02-features 3-3)。"""
+    auth = _parent_auth(request)
+    if not auth.is_set():
+        return
+    if not auth.authenticated(request.cookies.get(PIN_COOKIE)):
+        raise HTTPException(
+            status_code=401,
+            detail="保護者エリアは PIN でロックされています。PIN を入力してください",
+        )
+
+
+def _grant_parent(auth: ParentAuth, payload: dict[str, bool]) -> JSONResponse:
+    """PIN 認証成功のしるしにトークンを発行し、httpOnly Cookie で返す。"""
+    response = JSONResponse(payload)
+    response.set_cookie(
+        PIN_COOKIE,
+        auth.start_session(),
+        max_age=SESSION_TTL_SECONDS,
+        httponly=True,
+        samesite="lax",
+        path="/",
+    )
+    return response
+
+
+def _revoke_parent(auth: ParentAuth, payload: dict[str, bool]) -> JSONResponse:
+    response = JSONResponse(payload)
+    response.delete_cookie(PIN_COOKIE, path="/")
+    return response
+
+
 def create_app(components: AppComponents) -> FastAPI:
     """アプリ組み立て。テスト・デモでは組み替えた AppComponents を渡す。"""
     app = FastAPI(title="CurioQuest API", version="0.1.0")
     app.state.cq = components
+    # 保護者エリアの PIN は 1 家族 1 件（設定はストアの setting に保存）
+    app.state.parent_auth = ParentAuth(components.store, components.family_id)
 
     # ------------------------------------------------------------ 例外処理
 
@@ -135,6 +183,13 @@ def create_app(components: AppComponents) -> FastAPI:
     def value_error_handler(_: Request, exc: ValueError) -> JSONResponse:
         return JSONResponse(status_code=400, content={"detail": str(exc)})
 
+    @app.exception_handler(PinLocked)
+    def pin_locked_handler(_: Request, exc: PinLocked) -> JSONResponse:
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "PIN 失敗が続いているよ。しばらくしてからもう一度試してね"},
+        )
+
     # ------------------------------------------------------------ 基本
 
     @app.get("/", include_in_schema=False)
@@ -158,6 +213,7 @@ def create_app(components: AppComponents) -> FastAPI:
 
     @app.post(f"{API}/children", response_model=ChildOut, status_code=201)
     def create_child(body: ChildCreate, request: Request) -> ChildOut:
+        _require_parent(request)
         comp = _cq(request)
         child = comp.store.create_child(
             comp.family_id,
@@ -175,6 +231,7 @@ def create_app(components: AppComponents) -> FastAPI:
 
     @app.patch(f"{API}/children/{{child_id}}", response_model=ChildOut)
     def patch_child(child_id: str, body: ChildPatch, request: Request) -> ChildOut:
+        _require_parent(request)
         patch = body.model_dump(exclude_unset=True)
         child = _cq(request).store.update_child(child_id, patch)
         return ChildOut.from_domain(child)
@@ -182,6 +239,7 @@ def create_app(components: AppComponents) -> FastAPI:
     @app.delete(f"{API}/children/{{child_id}}/history", status_code=204)
     def delete_history(child_id: str, request: Request) -> None:
         """保護者が会話履歴だけを削除する（03-architecture 11 親権対応）。"""
+        _require_parent(request)
         store = _cq(request).store
         store.get_child(child_id)  # 存在確認（無ければ 404）
         store.delete_history_for_child(child_id)
@@ -276,6 +334,7 @@ def create_app(components: AppComponents) -> FastAPI:
         child_id: str, request: Request, limit: int = Query(default=30, ge=1, le=200)
     ) -> list[ConversationOut]:
         """会話一覧（いつ・どのミッションを・何ターン）。保護者画面 9-2 の行。"""
+        _require_parent(request)
         store = _cq(request).store
         store.get_child(child_id)  # 存在確認
         return [
@@ -283,9 +342,58 @@ def create_app(components: AppComponents) -> FastAPI:
             for summary in store.list_session_summaries(child_id, limit=limit)
         ]
 
+    @app.get(f"{API}/parent/pin/status", response_model=PinStatusOut)
+    def get_pin_status(request: Request) -> PinStatusOut:
+        """PIN が設定済みか・今この端末が保護者認証済みか（保護者画面の入口表示用）。"""
+        auth = _parent_auth(request)
+        return PinStatusOut(
+            is_set=auth.is_set(), authenticated=auth.authenticated(request.cookies.get(PIN_COOKIE))
+        )
+
+    @app.post(f"{API}/parent/pin", responses={403: {"description": "すでに PIN 設定済み"}})
+    def setup_pin(body: PinIn, request: Request) -> JSONResponse:
+        """はじめての PIN 設定。設定済みならこのルートでは変更できない（変更は /change）。"""
+        auth = _parent_auth(request)
+        if auth.is_set():
+            raise HTTPException(
+                status_code=403,
+                detail="PIN はすでに設定済みです。変更は /api/parent/pin/change を使ってね",
+            )
+        auth.setup(body.pin)
+        return _grant_parent(auth, PinStatusOut(is_set=True, authenticated=True).model_dump())
+
+    @app.post(f"{API}/parent/pin/verify")
+    def verify_pin(body: PinIn, request: Request) -> JSONResponse:
+        """PIN 入力による保護者認証。成功すると保護者用 Cookie を発行する。"""
+        auth = _parent_auth(request)
+        if not auth.is_set():
+            raise HTTPException(status_code=409, detail="先に PIN を設定してください")
+        if not auth.verify(body.pin):
+            raise HTTPException(status_code=401, detail="PIN が違います")
+        return _grant_parent(auth, PinStatusOut(is_set=True, authenticated=True).model_dump())
+
+    @app.post(f"{API}/parent/pin/change")
+    def change_pin(body: PinChangeIn, request: Request) -> JSONResponse:
+        """PIN 変更。現在の PIN が必要で、成功すると他の端末のログインはすべて無効になる。"""
+        auth = _parent_auth(request)
+        _require_parent(request)
+        auth.change(body.old_pin, body.new_pin)
+        # change で全セッション失効するため、この端末だけ新しい Cookie を受け取る
+        return _grant_parent(auth, PinStatusOut(is_set=True, authenticated=True).model_dump())
+
+    @app.post(f"{API}/parent/pin/logout")
+    def logout_pin(request: Request) -> JSONResponse:
+        """この端末の保護者認証だけを解除する。"""
+        auth = _parent_auth(request)
+        auth.end_session(request.cookies.get(PIN_COOKIE))
+        return _revoke_parent(
+            auth, PinStatusOut(is_set=auth.is_set(), authenticated=False).model_dump()
+        )
+
     @app.get(f"{API}/parent/dashboard", response_model=DashboardOut)
     def parent_dashboard(request: Request, day: str | None = Query(default=None)) -> DashboardOut:
         """保護者画面の主データ。進行状況に加えて興味・考え・最近の記録を一括で出す。"""
+        _require_parent(request)
         comp = _cq(request)
         store = comp.store
         resolved_day = _day_or_today(day)

@@ -319,6 +319,22 @@ class DashboardOut(BaseModel):
     children: list[DashboardChildOut] = Field(default_factory=list)
 
 
+class PinStatusOut(BaseModel):
+    """PIN の設定状況。保護者画面はこれを見て PIN 入力を出すか決める (02-features 3-3)。"""
+
+    is_set: bool
+    authenticated: bool = False
+
+
+class PinIn(BaseModel):
+    pin: str
+
+
+class PinChangeIn(BaseModel):
+    old_pin: str
+    new_pin: str
+
+
 def character_out(character: Character) -> CharacterOut:
     """CharacterOut はフィールドが多いためマッパーを関数で切り出す。"""
     return CharacterOut(
