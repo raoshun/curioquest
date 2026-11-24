@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CurioQuest おとなエリア</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Hiragino Sans", "Yu Gothic UI", system-ui, sans-serif;
+    max-width: 760px; margin: 0 auto; padding: 1rem; background: #f2f4f8; color: #2d3648;
+  }
+  h1 { font-size: 1.4rem; margin: 0.4rem 0 0.8rem; }
+  h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
+  .row { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+  button {
+    font: inherit; padding: 0.55rem 0.9rem; border-radius: 10px; border: 1px solid #b8c2d4;
+    background: #fff; cursor: pointer; color: #2d3648;
+  }
+  button.primary { background: #4a7bd0; border-color: #3a66b5; color: #fff; font-weight: bold; }
+  button.danger { background: #fff; border-color: #d08a8a; color: #a33; }
+  button:disabled { opacity: 0.45; }
+  .card { background: #fff; border: 1px solid #dde3ee; border-radius: 14px; padding: 0.9rem 1rem; margin: 0.8rem 0; }
+  .status { color: #67748c; font-size: 0.9rem; min-height: 1.2em; }
+  .error { color: #b3423e; }
+  .grid { display: flex; gap: 1rem; flex-wrap: wrap; }
+  .keynum { min-width: 6.5rem; }
+  .keynum .num { font-size: 1.5rem; font-weight: bold; }
+  .keynum .lbl { font-size: 0.8rem; color: #67748c; }
+  .chips { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+  .chip { background: #e8eefb; border-radius: 999px; padding: 0.3rem 0.7rem; font-size: 0.88rem; }
+  .meter { background: #e6eaf3; border-radius: 999px; height: 12px; overflow: hidden; margin: 0.4rem 0; }
+  .meter > div { background: #6fa8dc; height: 100%; width: 0%; transition: width 0.4s; }
+  .meter.over > div { background: #d08a5a; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+  th { color: #67748c; font-weight: normal; }
+  td, th { padding: 0.3rem 0.2rem; border-bottom: 1px solid #edf1f8; text-align: left; }
+  label { font-size: 0.88rem; display: block; margin: 0.4rem 0 0.15rem; }
+  input {
+    font: inherit; padding: 0.4rem 0.6rem; border-radius: 8px; border: 1px solid #b8c2d4;
+    max-width: 16rem; width: 100%;
+  }
+  select { font: inherit; padding: 0.35rem; border-radius: 8px; border: 1px solid #b8c2d4; }
+  .hidden { display: none; }
+  nav.top { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
+  a { color: #3a66b5; }
+  .think { border-left: 3px solid #cdd8ea; padding-left: 0.6rem; margin: 0.4rem 0; }
+  .think .when { color: #67748c; font-size: 0.78rem; }
+  fieldset { border: 1px solid #dde3ee; border-radius: 10px; margin: 0.6rem 0; padding: 0.6rem 0.8rem; }
+  legend { font-size: 0.85rem; color: #67748c; padding: 0 0.3rem; }
+</style>
+</head>
+<body>
+<!-- CurioQuest おとなエリア。PIN を設定するまでは開くが、設定すると保護者 API は Cookie 認証になる (02-features 3-3)。 -->
+<nav class="top">
+  <h1>CurioQuest おとなエリア</h1>
+  <a href="/">← こどもホームへもどる</a>
+</nav>
+<p class="status" id="topStatus"></p>
+
+<!-- ============ ゲート (PIN 設定 or 入力) ============ -->
+<section id="gateView" class="hidden">
+  <div class="card" id="setupCard">
+    <h2>まずは PIN を設定しよう</h2>
+    <p>おとなエリアを守るための 4〜8 桁の数字です。子どもが推測できる誕生日などはやめて、
+    おとなだけが知っている数字にしてください。なくすと戻せないので控えておいてね。</p>
+    <label for="setupPin">新しい PIN (4〜8 桁の数字)</label>
+    <input id="setupPin" type="password" inputmode="numeric" autocomplete="new-password" pattern="[0-9]*">
+    <label for="setupPin2">もう一度入力</label>
+    <input id="setupPin2" type="password" inputmode="numeric" autocomplete="new-password" pattern="[0-9]*">
+    <div class="row" style="margin-top:0.6rem">
+      <button class="primary" id="setupBtn">PIN を設定する</button>
+    </div>
+    <p class="status" id="setupStatus"></p>
+  </div>
+  <div class="card hidden" id="verifyCard">
+    <h2>PIN を入力してね</h2>
+    <label for="verifyPin">PIN</label>
+    <input id="verifyPin" type="password" inputmode="numeric" autocomplete="current-password" pattern="[0-9]*">
+    <div class="row" style="margin-top:0.6rem">
+      <button class="primary" id="verifyBtn">開く</button>
+    </div>
+    <p class="status" id="gateStatus"></p>
+  </div>
+</section>
+
+<!-- ============ ダッシュボード ============ -->
+<section id="dashView" class="hidden">
+  <div class="card">
+    <div class="row" style="justify-content:space-between">
+      <div class="row">
+        <label for="dayInput" style="margin:0">見る日</label>
+        <input id="dayInput" type="date" style="max-width:11rem">
+        <button id="reloadBtn">表示しなおす</button>
+      </div>
+      <div class="row">
+        <button id="changePinBtn">PIN を変える</button>
+        <button class="danger" id="logoutBtn">ログアウト</button>
+      </div>
+    </div>
+    <p class="status" id="dashStatus"></p>
+  </div>
+
+  <div id="childCards"></div>
+
+  <!-- PIN 変更フォーム -->
+  <div class="card hidden" id="changePinCard">
+    <h2>PIN を変える</h2>
+    <label for="oldPin">今の PIN</label>
+    <input id="oldPin" type="password" inputmode="numeric" autocomplete="current-password">
+    <label for="newPin">新しい PIN (4〜8 桁の数字)</label>
+    <input id="newPin" type="password" inputmode="numeric" autocomplete="new-password">
+    <div class="row" style="margin-top:0.6rem">
+      <button class="primary" id="changePinOkBtn">変更する</button>
+      <button id="changePinCancelBtn">やめる</button>
+    </div>
+    <p class="status" id="changePinStatus"></p>
+    <p>変更すると他の端末のログインはすべて解除されます。</p>
+  </div>
+
+  <!-- 子どもを追加する -->
+  <div class="card">
+    <h2>こどもを追加する</h2>
+    <label for="newNickname">ニックネーム (必須)</label>
+    <input id="newNickname" type="text" maxlength="40" placeholder="例: あお">
+    <div class="row">
+      <div>
+        <label for="newLimit">1日の利用上限 (分)</label>
+        <input id="newLimit" type="number" min="1" max="240" value="20">
+      </div>
+      <div>
+        <label for="newBirthday">誕生日 (任意)</label>
+        <input id="newBirthday" type="date">
+      </div>
+    </div>
+    <label for="newTopics">好きなテーマ (任意・コンマ区切り)</label>
+    <input id="newTopics" type="text" placeholder="例: じんりょく, どうぶつ">
+    <div class="row" style="margin-top:0.6rem">
+      <button class="primary" id="addChildBtn">追加する</button>
+    </div>
+    <p class="status" id="addChildStatus"></p>
+  </div>
+</section>
+
+<script>
+// おとなエリアの全部の読み書きはここ。API が返す detail 文字列をそのまま出して、
+// 細かい文言をサーバーと二重管理しない。
+"use strict";
+const API = "/api";
+const $ = (id) => document.getElementById(id);
+const show = (id, yes) => $(id).classList.toggle("hidden", !yes);
+const esc = (s) =>
+  String(s ?? "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+
+async function req(method, path, body) {
+  const resp = await fetch(path, {
+    method,
+    headers: body !== undefined ? { "Content-Type": "application/json" } : {},
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  const data = resp.status === 204 ? null : await resp.json().catch(() => null);
+  if (!resp.ok) {
+    const detail = data && data.detail ? data.detail : `HTTP ${resp.status}`;
+    throw new Error(
+      typeof detail === "string" ? detail : detail.message || JSON.stringify(detail));
+  }
+  return data;
+}
+const fail = (id) => (err) => {
+  const el = $(id);
+  el.textContent = err.message || "うまくいかなかったよ。もう一度おしてね";
+  el.classList.add("error");
+};
+const ok = (id, msg) => {
+  const el = $(id);
+  el.textContent = msg;
+  el.classList.remove("error");
+};
+
+const END_LABELS = {
+  shared_idea: "考えたことを話してクリア",
+  hints_done: "ヒントを使って終了",
+  child_exit: "本人の希望で終了",
+  time_up: "利用時間の上限",
+  idle: "返事がなくて終了",
+};
+const OUTCOME_LABELS = {
+  completed: "クリア",
+  child_exit: "やめた",
+  time_up: "時間切れ",
+  idle: "途中で途切れた",
+};
+const endLabel = (v) => END_LABELS[v] || v || "記録なし";
+
+function localToday() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+const stamp = (iso) => (iso ? String(iso).slice(0, 16).replace("T", " ") : "-");
+
+function conversationRows(list) {
+  if (!list || !list.length) {
+    return '<tr><td colspan="4">その日の会話記録はまだないよ</td></tr>';
+  }
+  return list
+    .map(
+      (c) =>
+        `<tr><td>${stamp(c.started_at)}</td><td>${esc(c.mission_title)}</td>` +
+        `<td>${c.turn_count}</td><td>${esc(endLabel(c.end_reason))}</td></tr>`,
+    )
+    .join("");
+}
+</script>
+<script>
+// ------------------------------------------------------------ ダッシュボード表示
+
+function childCard(c) {
+  const el = document.createElement("div");
+  el.className = "card";
+  const limitSec = Math.max(1, c.daily_limit_minutes * 60);
+  const pct = Math.min(100, Math.round((c.used_seconds_today / limitSec) * 100));
+  const over = c.used_seconds_today >= limitSec ? " over" : "";
+  const min = Math.floor(c.used_seconds_today / 60);
+  const interests = (c.interests || [])
+    .map((i) => `<span class="chip">${esc(i.topic)} ×${i.count}</span>`)
+    .join("");
+  const thinking = (c.recent_thinking || [])
+    .map(
+      (t) =>
+        `<div class="think"><div>${esc(t.summary)}</div>` +
+        `<div class="when">${stamp(t.created_at)}</div></div>`,
+    )
+    .join("") || '<p>最近の<strong>「こう考えた」</strong>はまだないよ。</p>';
+  const missions = (c.recent_missions || [])
+    .map(
+      (m) =>
+        `<tr><td>${esc(m.day)}</td><td>${esc(m.mission_title)}</td>` +
+        `<td>${esc(OUTCOME_LABELS[m.outcome] || m.outcome)}</td></tr>`,
+    )
+    .join("");
+  el.innerHTML = `
+    <h2>${esc(c.nickname)} <span style="font-weight:normal;font-size:0.85rem;color:#67748c">(${c.child_id.slice(0, 8)})</span></h2>
+    <p>きょうの お題: <strong>${esc(c.today_mission_title || "まだ決めていないよ")}</strong></p>
+    <div class="grid">
+      <div class="keynum"><div class="num">${c.missions_finished_today}</div><div class="lbl">きょうのクリア数</div></div>
+      <div class="keynum"><div class="num">${c.stamps_earned}</div><div class="lbl">スタンプの数</div></div>
+      <div class="keynum"><div class="num">${min}<small>分</small></div><div class="lbl">きょう使った時間 / 上限 ${c.daily_limit_minutes}分</div></div>
+    </div>
+    <div class="meter${over}"><div style="width:${pct}%"></div></div>
+    <h3 style="font-size:0.95rem;margin:0.7rem 0 0.3rem">この子の興味</h3>
+    <div class="chips">${interests || "<span>まだ 記録が ないよ</span>"}</div>
+    <h3 style="font-size:0.95rem;margin:0.7rem 0 0.3rem">最近の「こう考えた」</h3>
+    ${thinking}
+    <table><thead><tr><th>日づけ</th><th>ミッション</th><th>おわりかた</th></tr></thead>
+      <tbody>${missions || `<tr><td colspan="3">まだ ミッションの 記録が ないよ</td></tr>`}</tbody></table>
+    <table style="margin-top:0.6rem"><thead><tr><th>開始日時(UTC)</th><th>ミッション</th><th>ターン</th><th>おわり方</th></tr></thead>
+      <tbody data-conv="${esc(c.child_id)}">${conversationRows(c.recent_conversations)}</tbody></table>
+    <div class="row" style="margin-top:0.5rem">
+      <button data-allconv="${esc(c.child_id)}">ぜんぶの会話を見る</button>
+      <button data-edit="${esc(c.child_id)}">名前と上限を変更</button>
+    </div>
+    <div class="hidden" data-editform="${esc(c.child_id)}">
+      <label>ニックネーム</label>
+      <input type="text" maxlength="40" data-editnick="${esc(c.child_id)}" value="${esc(c.nickname)}">
+      <label>1日の利用上限(分)</label>
+      <input type="number" min="1" max="240" data-editlimit="${esc(c.child_id)}" value="${c.daily_limit_minutes}">
+      <div class="row" style="margin-top:0.4rem">
+        <button class="primary" data-save="${esc(c.child_id)}">保存する</button>
+      </div>
+      <p class="status" data-editstatus="${esc(c.child_id)}"></p>
+    </div>`;
+  return el;
+}
+</script>
+<script>
+// ------------------------------------------------------------ 読み込みと操作
+
+async function loadDash() {
+  const day = $("dayInput").value || localToday();
+  $("dayInput").value = day;
+  ok("dashStatus", "読み込み中…");
+  try {
+    const data = await req("GET", `${API}/parent/dashboard?day=${encodeURIComponent(day)}`);
+    const wrap = $("childCards");
+    wrap.replaceChildren(...data.children.map(childCard));
+    ok("dashStatus", `${data.day} の記録を読み込みました`);
+  } catch (err) {
+    fail("dashStatus")(err);
+  }
+}
+
+async function showGate(authed) {
+  show("gateView", !authed);
+  show("dashView", authed);
+  ok("topStatus", authed ? "保護者認証済みです" : "");
+  if (authed) {
+    await loadDash();
+    return;
+  }
+  const st = await req("GET", `${API}/parent/pin/status`);
+  show("setupCard", !st.is_set);
+  show("verifyCard", st.is_set);
+}
+
+async function boot() {
+  $("dayInput").value = localToday();
+  try {
+    const st = await req("GET", `${API}/parent/pin/status`);
+    await showGate(st.authenticated);
+  } catch (err) {
+    show("gateView", true);
+    show("setupCard", false);
+    show("verifyCard", true);
+    fail("gateStatus")(err);
+  }
+}
+
+// ゲートの操作
+$("setupBtn").addEventListener("click", async () => {
+  const pin = $("setupPin").value.trim();
+  if (pin !== $("setupPin2").value.trim()) {
+    fail("setupStatus")(new Error("2つの入力が一致しませんでした"));
+    return;
+  }
+  try {
+    await req("POST", `${API}/parent/pin`, { pin });
+    $("setupPin").value = "";
+    $("setupPin2").value = "";
+    await showGate(true);
+  } catch (err) {
+    fail("setupStatus")(err);
+  }
+});
+$("verifyBtn").addEventListener("click", async () => {
+  try {
+    await req("POST", `${API}/parent/pin/verify`, { pin: $("verifyPin").value.trim() });
+    $("verifyPin").value = "";
+    await showGate(true);
+  } catch (err) {
+    fail("gateStatus")(err);
+  }
+});
+$("verifyPin").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") $("verifyBtn").click();
+});
+// ダッシュボードの操作
+$("reloadBtn").addEventListener("click", loadDash);
+$("changePinBtn").addEventListener("click", () => {
+  show("changePinCard", $("changePinCard").classList.contains("hidden"));
+});
+$("changePinCancelBtn").addEventListener("click", () => show("changePinCard", false));
+$("changePinOkBtn").addEventListener("click", async () => {
+  try {
+    await req("POST", `${API}/parent/pin/change`, {
+      old_pin: $("oldPin").value.trim(),
+      new_pin: $("newPin").value.trim(),
+    });
+    $("oldPin").value = "";
+    $("newPin").value = "";
+    show("changePinCard", false);
+    ok("changePinStatus", "PIN を変更しました");
+  } catch (err) {
+    fail("changePinStatus")(err);
+  }
+});
+$("logoutBtn").addEventListener("click", async () => {
+  try {
+    await req("POST", `${API}/parent/pin/logout`);
+    await showGate(false);
+  } catch (err) {
+    fail("dashStatus")(err);
+  }
+});
+$("addChildBtn").addEventListener("click", async () => {
+  const topics = $("newTopics").value
+    .split(/[,、]/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const body = {
+    nickname: $("newNickname").value.trim(),
+    daily_limit_minutes: Number($("newLimit").value || 20),
+  };
+  if (topics.length) body.favorite_topics = topics;
+  if ($("newBirthday").value) body.birthday = $("newBirthday").value;
+  try {
+    await req("POST", `${API}/children`, body);
+    $("newNickname").value = "";
+    $("newTopics").value = "";
+    $("newBirthday").value = "";
+    ok("addChildStatus", "追加しました。下に新しい子のカードが加わりました");
+    await loadDash();
+  } catch (err) {
+    fail("addChildStatus")(err);
+  }
+});
+
+// 子どもカードの中のボタンはまとめて処理する(再描画で要素が入れ替わるため)
+$("childCards").addEventListener("click", async (e) => {
+  const btn = e.target.closest("button");
+  if (!btn) return;
+  const conv = btn.dataset.allconv;
+  const edit = btn.dataset.edit;
+  const save = btn.dataset.save;
+  if (conv) {
+    try {
+      const list = await req("GET", `${API}/children/${encodeURIComponent(conv)}/conversations?limit=100`);
+      const tbody = document.querySelector(`[data-conv="${cssEscape(conv)}"]`);
+      if (tbody) tbody.innerHTML = conversationRows(list);
+    } catch (err) {
+      window.alert(err.message);
+    }
+    return;
+  }
+  if (edit) {
+    const form = document.querySelector(`[data-editform="${cssEscape(edit)}"]`);
+    if (form) form.classList.toggle("hidden");
+    return;
+  }
+  if (save) {
+    const statusEl = document.querySelector(`[data-editstatus="${cssEscape(save)}"]`);
+    try {
+      await req("PATCH", `${API}/children/${encodeURIComponent(save)}`, {
+        nickname: document.querySelector(`[data-editnick="${cssEscape(save)}"]`).value.trim(),
+        daily_limit_minutes: Number(
+          document.querySelector(`[data-editlimit="${cssEscape(save)}"]`).value,
+        ),
+      });
+      if (statusEl) {
+        statusEl.classList.remove("error");
+        statusEl.textContent = "保存しました";
+      }
+    } catch (err) {
+      if (statusEl) {
+        statusEl.classList.add("error");
+        statusEl.textContent = err.message;
+      }
+    }
+  }
+});
+function cssEscape(v) {
+  return window.CSS && CSS.escape ? CSS.escape(v) : v.replace(/[^a-zA-Z0-9_-]/g, (c) => "\\u" + c.charCodeAt(0).toString(16));
+}
+
+boot();
+</script>
+</body>
+</html>

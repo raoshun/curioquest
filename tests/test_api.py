@@ -340,23 +340,34 @@ def test_store_value_error_is_400(client: TestClient, monkeypatch: pytest.Monkey
 # ------------------------------------------------------------ 起動・組み立て
 
 
-def test_root_serves_demo_page(client: TestClient) -> None:
-    """GET / が最小検証 Web ページを同源で返す（音声ターンは同源必須のため）。"""
-    resp = client.get("/")
-    assert resp.status_code == 200
-    assert resp.headers["content-type"].startswith("text/html")
-    assert "マイクにお話し" in resp.text
-    assert "/api/" in resp.text
+def test_pages_are_served_same_origin(client: TestClient) -> None:
+    """GET / (こどもホーム)・/parent (おとなエリア)・/curio (最小検証) を同源で返す。
+
+    音声ターンは同源必須のため、ページと API が同じオリジンにあることをここで担保する。
+    """
+    home = client.get("/")
+    assert home.status_code == 200
+    assert home.headers["content-type"].startswith("text/html")
+    assert "CurioQuest こどもホーム" in home.text
+
+    parent = client.get("/parent")
+    assert parent.status_code == 200
+    assert "おとなエリア" in parent.text
+
+    curio = client.get("/curio")
+    assert curio.status_code == 200
+    assert "マイクにお話し" in curio.text
+    assert "/api/" in curio.text
 
 
-def test_root_not_found_if_static_missing(
+def test_page_not_found_if_static_missing(
     client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """static ディレクトリが無い場合は導出物欠落として 404 で気づかせる。"""
     monkeypatch.setattr(app_module, "_STATIC_DIR", tmp_path / "missing")
     resp = client.get("/")
     assert resp.status_code == 404
-    assert "index.html" in resp.json()["detail"]
+    assert resp.json()["detail"] == "ページが見つからなかったよ"
 
 
 def test_build_components_creates_standalone_family(tmp_path: Path) -> None:

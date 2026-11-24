@@ -3,107 +3,311 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CurioQuest 最小検証ページ</title>
+<title>CurioQuest こどもホーム</title>
 <style>
-  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 1.5rem auto; padding: 0 1rem; }
-  h1 { font-size: 1.3rem; }
-  fieldset { border: 1px solid #ccc; border-radius: 8px; margin-bottom: 1rem; padding: 0.8rem; }
-  legend { font-weight: bold; }
-  button { padding: 0.5rem 1rem; border-radius: 8px; border: 1px solid #888; background: #f7f7f7; }
-  button.record { background: #e74c3c; color: #fff; border-color: #a3359a; }
-  .transcript { background: #f0f4ff; border-radius: 8px; padding: 0.6rem; min-height: 1.5rem; }
-  .reply { background: #fff7e6; border-radius: 8px; padding: 0.6rem; min-height: 1.5rem; margin-top: 0.6rem; } .status { color: #666; font-size: 0.85rem; }
-  #timer { font-variant-numeric: tabular-nums; }
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: " Hiragino Maru Gothic ProN", "Hiragino Sans", "Yu Gothic UI", system-ui, sans-serif;
+    max-width: 720px; margin: 0 auto; padding: 1rem; background: #fff8ec; color: #4a3b2a;
+  }
+  h1 { font-size: 1.4rem; margin: 0.4rem 0 0.8rem; }
+  .row { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+  button {
+    font: inherit; padding: 0.9rem 1.2rem; border-radius: 14px; border: 2px solid #d8b98c;
+    background: #fff; cursor: pointer; font-weight: bold; color: #4a3b2a;
+  }
+  button.primary { background: #ffb74d; border-color: #e59a2f; }
+  button:disabled { opacity: 0.45; }
+  button.big { font-size: 1.15rem; padding: 1.1rem 1.6rem; }
+  .card {
+    background: #fff; border: 2px solid #eeddc0; border-radius: 16px;
+    padding: 0.9rem 1rem; margin: 0.8rem 0;
+  }
+  .card h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
+  .status { color: #8a7a63; font-size: 0.9rem; min-height: 1.2em; }
+  .chips { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+  .chip { background: #f3e7d2; border-radius: 999px; padding: 0.35rem 0.8rem; font-size: 0.95rem; }
+  .timebar { background: #f0e3cd; border-radius: 999px; height: 14px; overflow: hidden; margin: 0.4rem 0; }
+  .timebar > div { background: #7bc96f; height: 100%; width: 0%; transition: width 0.4s; }
+  .qa { min-height: 4rem; background: #fffdf6; border-radius: 12px; padding: 0.6rem; margin-top: 0.5rem; line-height: 1.6; }
+  .reply { background: #fff3d6; }
+  .hidden { display: none; }
+  .count { font-size: 2rem; font-weight: bold; margin-right: 0.4rem; }
+  label { font-size: 0.9rem; }
+  input[type="text"], input[type="date"], input[type="number"] {
+    font: inherit; padding: 0.4rem 0.6rem; border-radius: 8px; border: 1px solid #cbb894; width: 100%;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+  td, th { padding: 0.3rem 0.2rem; border-bottom: 1px solid #f0e6d2; text-align: left; }
+  .pinbox label { display: block; margin: 0.5rem 0; }
+  .tabs { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .tabs button.active { background: #ffb74d; border-color: #e59a2f; }
+  nav.top { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
 </style>
 </head>
 <body>
-<h1>CurioQuest 最小検証ページ</h1>
-<p class="status">同じオリジンの <code>/api/</code> を呼び、実機で MVP の流れを確認するためのページです。</p>
+<!-- CurioQuest こどもホーム。子ども向け操作は PIN なし、保護者画面は PIN で守る (02-features 3-3)。 -->
+<h1 id="pageTitle">CurioQuest</h1>
 
-<fieldset>
-  <legend>1. こどもとミッション</legend>
-  <button id="startBtn">はじめる</button>
-  <div class="status" id="metaStatus">未開始</div>
-</fieldset>
+<!-- ============ こどもホーム (F01 3-3: 起動時に子を選ぶ) ============ -->
+<section id="homeView">
+  <div class="card" id="childPickCard">
+    <h2>だれが つかう?</h2>
+    <div class="chips" id="childChips"></div>
+    <div class="row" style="margin-top:0.6rem">
+      <button id="addChildBtn">はじめての こどもを とうろく</button>
+    </div>
+    <div class="status" id="childPickStatus"></div>
+  </div>
 
-<fieldset>
-  <legend>2. マイクにお話し</legend>
-  <button id="micBtn" disabled>マイクにお話し</button>
-  <span id="timer">0.0s</span>
-  <div class="status" id="recStatus">マイクはボタンを押した時だけ使います（保存は音声のみ、サーバーは認識後にテキストだけ扱う）</div>
-</fieldset>
+  <div class="card" id="newChildCardHidden" hidden>
+    <h2>こどもを とうろく</h2>
+    <div class="pinbox">
+      <label>nickname <input type="text" id="newName" maxlength="40" placeholder="ゆい"></label>
+      <label>たんじょうび (任意) <input type="date" id="newBirthday"></label>
+      <label>1日の つかえる じかん(分) <input type="number" id="newLimit" min="1" max="240" value="20"></label>
+      <div class="row">
+        <button class="primary" id="newChildSave">きめる</button>
+        <button id="newChildCancel">もどる</button>
+      </div>
+      <div class="status" id="newChildStatus"></div>
+    </div>
+  </div>
 
-<fieldset>
-  <legend>3. あいことば</legend>
-  <button id="stopWordHi" disabled>ハイ!</button>
-  <button id="stopWordYada" disabled>やだ!</button>
-  <div class="status">「やだ!」は何度でも優しく止めます（回数を使いません）</div>
-</fieldset>
+  <div id="homeCard" class="card" hidden>
+    <div class="row" style="justify-content:space-between">
+      <h2 id="homeName" style="margin:0"></h2>
+      <button id="switchBtn" class="small">こどもの こうかん</button>
+    </div>
+    <div class="card" style="background:#fff8ec;margin-top:0.7rem">
+      <h2>きょうの ミッション</h2>
+      <p id="missionTitle" style="margin:0.2rem 0">よみこみ中…</p>
+      <p class="status" id="missionQuestion"></p>
+    </div>
+    <div class="card" style="background:#fff8ec">
+      <h2>のこれる じかん</h2>
+      <div class="timebar"><div id="timeFill"></div></div>
+      <p id="timeText" style="margin:0.2rem 0"></p>
+    </div>
+    <div class="row">
+      <button class="primary big" id="startBtn">はなして たのしむ</button>
+      <button id="stampsBtn">きみの スタンプ</button>
+      <button id="diaryBtn" title="自分のことは自分で終われる。きみが やめる まで やめないよ">やすむ</button>
+    </div>
+    <div class="status" id="homeStatus"></div>
+  </div>
+</section>
 
-<div class="transcript" id="transcript">（あなたの発話はここに出ます）</div>
-<div class="reply" id="reply">（キャラクターの返事はここに出ます）</div>
-<div class="status" id="turnStatus"></div>
+<!-- ============ はなす (F01 3-4 停止词语・F07 13 時間経過年) ============ -->
+<section id="talkView" hidden>
+  <nav class="top">
+    <h1 style="font-size:1.1rem">はなしているよ</h1>
+    <div class="row">
+      <button id="endTalkBtn">やめる</button>
+      <button id="micBtn" disabled class="big">マイクで はなす</button>
+    </div>
+  </nav>
+  <div class="row" style="margin-top:0.5rem">
+    <button id="stopWordHi" disabled>ストップ「はい!」</button>
+    <button id="stopWordYada" disabled>ストップ「やだ!」</button>
+  </div>
+  <div class="card">
+    <div id="transcript">(ここで なにか おしえて くるよ)</div>
+    <div class="qa reply" id="reply">(character の こたえは ここに でる)</div>
+    <div class="status" id="turnStatus"></div>
+    <span id="timer"></span>
+    <div class="status" id="recStatus">はなす のは マイクボタンをおしたときだけ。音声は保存されないよ</div>
+  </div>
+</section>
+
+<!-- ============ スタンプ ============ -->
+<section id="stampView" hidden>
+  <nav class="top">
+    <h1 style="font-size:1.1rem">きみの スタンプ</h1>
+    <button id="stampsBack">もどる</button>
+  </nav>
+  <div class="card">
+    <p><span class="count" id="stampEarned">0</span>こ あつめた!(ぜんぶで <span id="stampAvail">0</span>こ あるよ)</p>
+    <div class="chips" id="stampsGrid"></div>
+  </div>
+</section>
+
+<!-- ============ 保護者エリア の とちゅう (F01 3-3 PIN かけ) ============ -->
+<nav class="top" style="margin-top:1.2rem">
+  <span class="status">おとなエリア へ 移動</span>
+  <button id="parentBtn">おとなエリア</button>
+</nav>
 
 <script>
-// 最小検証: 子作成 -> 今日開始 -> 録音 -> WAV -> POST /api/.../voice -> 再生/終了表示
+// 子画面ロジック。API 既定値は子ども向けで PIN 不要、保護者書込みのみ PIN 必須。
 const $ = (id) => document.getElementById(id);
-const api = async (path, options = {}) => {
-  const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
-  if (!res.ok) {
-    let detail = res.statusText;
-    try { const j = await res.json(); detail = j.detail ?? JSON.stringify(j).slice(0, 120); } catch { /* JSON 以外の本文は無視 */ }
-    throw new Error(`HTTP ${res.status}: ${String(detail).slice(0, 160)}`);
-  }
-  if (res.status === 204) return null;
-  return res.json();
+const set = (id, text) => { const el = $(id); if (el) el.textContent = text; };
+const state = { childId: null, child: null, session: null };
+const api = async (path, opts = {}) => {
+  const res = await fetch(`/api${opts.v1 === false ? "" : ""}${path}`, { headers: { "Content-Type": "application/json" }, ...opts });
+  return res;
 };
-const set = (id, text) => { $(id).textContent = text; };
-const TURN_WAIT = "送信しました。キャラクターが考えています…（この環境では 1 返事に 30〜90 秒かかることがあります）";
+const get = async (path) => {
+  const res = await api(path);
+  if (!res.ok) {
+    let d = res.statusText;
+    try { d = (await res.json()).detail ?? d; } catch { /* ignore */ }
+    const e = new Error(d); e.status = res.status; throw e;
+  }
+  return res.status === 204 ? null : res.json();
+};
+const post = async (path, body, opts = {}) => {
+  const res = await api(path, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body), ...opts });
+  if (!res.ok) {
+    let d = res.statusText;
+    try { d = (res.headers.get("content-type")?.includes("json")) ? (await res.json()).detail ?? d : d; } catch { /* ignore */ }
+    const e = new Error(d); e.status = res.status; throw e;
+  }
+  return res.status === 204 ? null : res.json();
+};
 
-let childId = null, session = null;
-let busy = false, started = false, ended = false;
-function refreshButtons() {
-  const usable = started && !ended;
-  $("startBtn").disabled = started || busy;
-  // 録音中の「おわったよ」停止は常に押せるようにする
-  $("micBtn").disabled = !usable || (busy && !recording);
-  $("stopWordHi").disabled = !usable || busy || recording;
-  $("stopWordYada").disabled = !usable || busy || recording;
+function show(view) {
+  for (const id of ["homeView", "talkView", "stampView"]) $(id).hidden = id !== view;
+  $("pageTitle").style.display = view === "homeView" ? "" : "none";
 }
-let mediaStream = null, sourceNode = null, audioCtx = null, processor = null;
-let recording = false, recordedChunks = [], recordStart = 0, timerId = null;
 
-$("startBtn").addEventListener("click", async () => {
-  if (busy || started) return;
-  busy = true; refreshButtons();
+// ---- 子一覧・選択 ----
+async function loadChildren() {
+  set("childPickStatus", "ようこそ!もよっているよ…");
+  const kids = await get("/children");
+  const wrap = $("childChips");
+  wrap.textContent = "";
+  if (kids.length === 0) {
+    set("childPickStatus", "まずは こどもを とうろくしてね");
+    return;
+  }
+  for (const k of kids) {
+    const b = document.createElement("button");
+    b.className = "chip";
+    b.textContent = k.nickname;
+    b.addEventListener("click", () => selectChild(k.id));
+    wrap.appendChild(b);
+  }
+  set("childPickStatus", "");
+}
+async function selectChild(id) {
+  state.childId = id;
   try {
-    set("metaStatus", "こどもを登録しています…");
-    const child = await api("/api/children", { method: "POST", body: JSON.stringify({ nickname: "Web検証" }) });
-    childId = child.id;
-    set("metaStatus", "こどもを作成しました。今日のセッションを開始します…（この環境では 30〜90 秒かかります。このままお待ちください）");
-    session = await api("/api/sessions", { method: "POST", body: JSON.stringify({ child_id: childId }) });
-    started = true;
-    set("metaStatus", `ミッション「${session.mission_id}」開始（状態: ${session.state}）。下のマイクボタンかあいことばを使ってください`);
-  } catch (err) { set("metaStatus", `開始失敗: ${err.message}`); }
-  finally { busy = false; refreshButtons(); }
+    state.child = await get(`/children/${id}`);
+  } catch (err) { set("homeStatus", `えらぶことが できなかった: ${err.message}`); return; }
+  $("childPickCard").hidden = true;
+  $("newChildCardHidden").hidden = true;
+  $("homeCard").hidden = false;
+  $("homeName").textContent = `${state.child.nickname} さん`;
+  await refreshHome();
+}
+async function refreshHome() {
+  setStatus(`progress: loading…`);
+  try {
+    const prog = await get(`/children/${state.childId}/progress`);
+    $("missionTitle").textContent = prog.today_mission ? prog.today_mission.title : "きょうの ふつうの もんだいは まだだよ";
+    $("missionQuestion").textContent = prog.today_mission ? prog.today_mission.question : "";
+    const limitSec = prog.daily_limit_minutes * 60;
+    const remain = prog.remaining_seconds ?? 0;
+    const used = Math.min(100, limitSec ? (prog.used_seconds_today / limitSec) * 100 : 0);
+    $("timeFill").style.width = `${Math.max(0, Math.min(100, 100 - used))}%`;
+    $("timeText").textContent =
+      `けさから ${Math.floor(prog.used_seconds_today / 60)}ふん つかって / 一日 ${prog.daily_limit_minutes}ふんまで / のこれる ${Math.ceil(remain / 60)}ふん`;
+    set("homeStatus", prog.remaining_seconds === 0 ? "きょうの じかんを ぜんぶ つかっちゃったよ。あした また あそぼう!" : "");
+    $("startBtn").disabled = prog.remaining_seconds === 0;
+  } catch (err) { set("homeStatus", `きょうの ようす が とれなかった: ${err.message}`); }
+}
+function setStatus(t) { const s = $("timeText"); if (s) s.title = t; }
+
+$("addChildBtn").addEventListener("click", () => { $("childPickCard").hidden = true; $("newChildCardHidden").hidden = false; });
+$("newChildCancel").addEventListener("click", () => { $("newChildCardHidden").hidden = true; $("childPickCard").hidden = false; });
+$("newChildSave").addEventListener("click", async () => {
+  const nickname = $("newName").value.trim();
+  if (!nickname) { set("newChildStatus", "なまえを いれてね"); return; }
+  const body = { nickname, daily_limit_minutes: Number($("newLimit").value) || 20 };
+  if ($("newBirthday").value) body.birthday = $("newBirthday").value;
+  try {
+    const child = await post("/children", body);
+    set("newChildStatus", `${child.nickname} さんを とうろくしたよ!`);
+    await loadChildren();
+    selectChild(child.id);
+  } catch (err) { set("newChildStatus", `とうろく しっぱい: ${err.message}`); }
+});
+$("switchBtn").addEventListener("click", () => {
+  $("homeCard").hidden = true;
+  $("childPickCard").hidden = false;
+  $("childPickStatus").textContent = "こどもを えらんでね";
 });
 
-async function startRecording() {
-  if (busy) { set("recStatus", "いまキャラクターが返事中です。表示されてから録音してください"); return; }
-  set("recStatus", "マイク準備中…（許可を求められたら「許可」を押してください）");
+// ---- はなす ----
+$("startBtn").addEventListener("click", async () => {
+  set("homeStatus", "きょうの ぎもんを よんで、おはなしを はじめるよ…(じかんが かかる ことが あるよ)");
+  $("startBtn").disabled = true;
   try {
-    // AudioContext は getUserMedia と同じクリック操作の中で同期的に生成・再開する。
-    // await の後で作ると自動再生ポリシーで「停止」のままになり、無音データしか採れない。
+    state.session = await post("/sessions", { child_id: state.childId });
+    show("talkView");
+    $("micBtn").disabled = false;
+    $("stopWordHi").disabled = false;
+    $("stopWordYada").disabled = false;
+    set("turnStatus", state.session.reply);
+    set("recStatus", "マイクでも あいことばでも おしえられるよ");
+  } catch (err) {
+    set("homeStatus", `はじめることが できなかった: ${err.message}`);
+    $("startBtn").disabled = false;
+  }
+});
+$("endTalkBtn").addEventListener("click", endTalk);
+async function endTalk() {
+  if (state.session) {
+    try { await post(`/sessions/${state.session.session_id}/complete`, {}); } catch { /* 終了失敗も終了したことにする */ }
+  }
+  state.session = null;
+  $("micBtn").disabled = true; $("stopWordHi").disabled = true; $("stopWordYada").disabled = true;
+  show("homeView");
+  await refreshHome();
+}
+$("stampsBtn").addEventListener("click", async () => {
+  show("stampView");
+  try {
+    const st = await get(`/children/${state.childId}/stamps`);
+    $("stampEarned").textContent = st.earned;
+    $("stampAvail").textContent = st.available;
+    const g = $("stampsGrid");
+    g.textContent = "";
+    for (const s of st.stamps) {
+      const c = document.createElement("span");
+      c.className = "chip";
+      c.textContent = `★ ${s.name}`;
+      c.title = s.description;
+      g.appendChild(c);
+    }
+  } catch (err) { $("stampEarned").textContent = "?"; }
+});
+$("stampsBack").addEventListener("click", () => { show("homeView"); refreshHome(); });
+$("diaryBtn").addEventListener("click", async () => {
+  // F01 「自分で終われる」: 利用時間リミットと関係なく、子ども自身がここで止める。
+  set("homeStatus", "きょうの ようす を みているよ…");
+  await refreshHome();
+  set("homeStatus", "ここで いつでも やすめるよ。きょうを やめるのも ぜんぶ きみの おもいどおり!");
+});
+
+// 音声録音・ターン送信(最小検証ページから受け継ぎ)
+let mediaStream = null, audioCtx = null, processor = null, sourceNode = null;
+let recording = false, recordedChunks = [], recordStart = 0, timerId = null, busy = false;
+$("micBtn").addEventListener("click", () => (recording ? stopRecording() : startRecording()));
+async function startRecording() {
+  set("recStatus", "マイク じゅんび中…「とどける(許可)」を おしてね");
+  try {
     audioCtx = audioCtx ?? new AudioContext();
     if (audioCtx.state === "suspended") await audioCtx.resume();
-    const source = await captureSource();
+    if (!mediaStream || !mediaStream.active) mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     recordedChunks = [];
-    // PCM を集めて録音中に WAV 化するため AudioContext を使う
-    sourceNode = audioCtx.createMediaStreamSource(source);
+    sourceNode = audioCtx.createMediaStreamSource(mediaStream);
     processor = audioCtx.createScriptProcessor(4096, 1, 1);
-    const inputRate = audioCtx.sampleRate;
+    const rate = audioCtx.sampleRate;
     processor.onaudioprocess = (e) => {
-      const data = downsample(e.inputBuffer.getChannelData(0), inputRate, 16000);
+      const data = downsample(e.inputBuffer.getChannelData(0), rate, 16000);
       const pcm = new Int16Array(data.length);
       for (let i = 0; i < data.length; i++) pcm[i] = Math.max(-32768, Math.min(32767, Math.round(data[i] * 32767)));
       recordedChunks.push(pcm);
@@ -112,168 +316,101 @@ async function startRecording() {
     processor.connect(audioCtx.destination);
     recording = true;
     recordStart = performance.now();
-    timerId = setInterval(() => set("timer", `${((performance.now() - recordStart) / 1000).toFixed(1)}s`), 100);
+    timerId = setInterval(() => $("timer").textContent = `${((performance.now() - recordStart) / 1000).toFixed(1)}秒`, 100);
     $("micBtn").textContent = "おわったよ";
-    $("micBtn").classList.add("record");
-    set("recStatus", "録音中… もう一度押すと送信します");
-    refreshButtons();
+    set("recStatus", "ろくおん中… おなじ ボタンを おすと おくるよ");
   } catch (err) {
-    const name = (err && err.name) || String(err);
-    if (name === "NotAllowedError" || name === "SecurityError")
-      set("recStatus", "マイクが拒否されました。アドレスバーの 🔒（サイト情報）からマイクを「許可」に変えて再読み込みしてください");
-    else if (name === "NotFoundError" || name === "DevicesNotFoundError")
-      set("recStatus", "マイクが見つかりませんでした。PC のマイク接続を確認してください");
-    else if (name === "NotReadableError" || name === "AbortError")
-      set("recStatus", "マイクを別のアプリが使用中か、マイクの読み取りに失敗しました。他のアプリを閉じて再試行してください");
-    else if (name === "TypeError")
-      set("recStatus", "ブラウザがマイクを使えない文脈です（https か localhost で開いていますか?）");
-    else set("recStatus", `マイク準備に失敗しました (${name})`);
+    set("recStatus", `マイクが つかえなかった(${err.name})。ブラウザの マイク きょかを みとめてね`);
   }
 }
-
-function abortRecording(message) {
-  clearInterval(timerId);
-  recording = false;
-  if (processor) { processor.onaudioprocess = null; processor.disconnect(); processor = null; }
-  if (sourceNode) { sourceNode.disconnect(); sourceNode = null; }
-  recordedChunks = [];
-  $("micBtn").textContent = "マイクにお話し";
-  $("micBtn").classList.remove("record");
-  set("recStatus", message);
-  refreshButtons();
-}
-
 function stopRecording() {
-  const seconds = Math.max(1, Math.round((performance.now() - recordStart) / 1000));
   clearInterval(timerId);
   recording = false;
-  // 最後の 1 ブロック (~0.1〜0.25 秒) は取りこぼすがデモ用途では許容する
   if (processor) { processor.onaudioprocess = null; processor.disconnect(); processor = null; }
   if (sourceNode) { sourceNode.disconnect(); sourceNode = null; }
-  $("micBtn").textContent = "マイクにお話し";
-  $("micBtn").classList.remove("record");
+  $("micBtn").textContent = "マイクで はなす";
   const total = recordedChunks.reduce((n, c) => n + c.length, 0);
   const pcm = new Int16Array(total);
   let off = 0;
   for (const c of recordedChunks) { pcm.set(c, off); off += c.length; }
   recordedChunks = [];
-  refreshButtons();
-  if (total === 0) { set("recStatus", "マイクの音を集められませんでした（送信していません）。数値が動いていなければ OS のマイク設定を確認してください"); return; }
-  postVoice(encodeWav(pcm, 16000), Math.min(seconds, 3600));
+  if (total === 0) { set("recStatus", "おとが とどかなかったよ(おくってないよ)。もういちど おしえてね"); return; }
+  postVoice(encodeWav(pcm, 16000), Math.max(1, Math.round((performance.now() - recordStart) / 1000)));
 }
-
-$("micBtn").addEventListener("click", () => { recording ? stopRecording() : startRecording(); });
-async function captureSource() {
-  if (mediaStream && mediaStream.active) return mediaStream;
-  mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  const track = mediaStream.getAudioTracks()[0];
-  if (track) track.addEventListener("ended", () => { mediaStream = null; if (recording) abortRecording("録音の途中でマイクが外れました（送信していません）"); });
-  return mediaStream;
-}
-$("stopWordHi").addEventListener("click", () => turn("ハイ!"));
-$("stopWordYada").addEventListener("click", () => turn("やだ!"));
-
-// 1 ターン（音声送信）: 認識失敗は 503 → 回数を消費していない旨を伝える
 async function postVoice(wav, seconds) {
-  if (!session || busy) { set("recStatus", "いま処理中です。完了してから録音してください"); return; }
-  busy = true; refreshButtons();
-  set("turnStatus", "音声を送信中です…（認識から返事・合成まで 1〜2 分かかることがあります。このままお待ちください）");
+  if (!state.session || busy) return;
+  busy = true;
+  set("turnStatus", "こえを おくって、かんがえて もらっているよ…");
   try {
-    const res = await fetch(`/api/sessions/${session.session_id}/voice?seconds_spent=${seconds}`, {
+    const res = await fetch(`/api/sessions/${state.session.session_id}/voice?seconds_spent=${seconds}`, {
       method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: wav });
     if (!res.ok) {
-      let detail = res.statusText;
-      try { detail = (await res.json()).detail ?? detail; } catch { /* JSON でない本文は無視 */ }
-      detail = typeof detail === "string" ? detail : JSON.stringify(detail);
-      const why = res.status === 503 ? String(detail).includes("音声認識")
-        ? "（このターンは実行されておらず、回数は減っていません）" : "（この設定では音声を入力できません）" : "";
-      set("turnStatus", `音声ターン失敗: ${detail} ${why}`);
+      let d = res.statusText;
+      try { d = (await res.json()).detail ?? d; } catch { /* ignore */ }
+      set("turnStatus", `おくることができなかった: ${d}`);
       return;
     }
-    const out = await res.json();
-    set("recStatus", "音声を送信し終えました。返事と音を待っています…");
-    renderTurn(audioText(out), out, out.stamps_awarded ?? []);
-  } catch (err) {
-    set("turnStatus", `通信失敗: ${err.message}（サーバはターンを実行済みで回数が減っている可能性があります）`);
-  } finally {
-    busy = false; refreshButtons();
-  }
+    renderTurn({ ...(await res.json()) }, "(こえで こたえたよ)");
+  } catch (err) { set("turnStatus", `つながり が きれた: ${err.message}`); }
+  finally { busy = false; }
 }
-// テキストターン（あいことば等）
-async function turn(text) {
-  if (!session) { set("turnStatus", "まず「はじめる」を押してセッションを開始してください"); return; }
-  if (busy) { set("turnStatus", "はいまキャラクターが返事中です。完了してからもう一度押してください"); return; }
-  busy = true; refreshButtons();
-  set("turnStatus", TURN_WAIT);
+async function sendWords(text) {
+  if (!state.session || busy) return;
+  busy = true;
+  set("turnStatus", "おてがみを おくって いるよ…");
   try {
-    const body = { text, seconds_spent: 0 };
-    const out = await api(`/api/sessions/${session.session_id}/message`, { method: "POST", body: JSON.stringify(body) });
-    renderTurn(text, out, out.stamps_awarded ?? []);
-  } catch (err) { set("turnStatus", `ターン失敗: ${err.message}（HTTP 4xx は実行前に弾かれたので回数は減っていません）`); }
-  finally { busy = false; refreshButtons(); }
+    const out = await post(`/sessions/${state.session.session_id}/message`, { text, seconds_spent: 0 });
+    renderTurn(out, text);
+  } catch (err) { set("turnStatus", `おてがみ しっぱい: ${err.message}`); }
+  finally { busy = false; }
 }
-function audioText(out) { return out.voice_available ? "(音声を再生しました)" : ""; }
-function renderTurn(transcriptText, out, stamps) {
-  if (transcriptText) set("transcript", `あなた: ${transcriptText}`);
-  set("reply", `キャラクター: ${out.reply}`);
+$("stopWordHi").addEventListener("click", () => sendWords("はい!"));
+$("stopWordYada").addEventListener("click", () => sendWords("やだ!"));
+function renderTurn(out, words) {
+  if (out.thinking_summary) $("transcript").textContent = `きろく: ${out.thinking_summary}`;
+  $("reply").textContent = out.reply;
   const notes = [];
-  if (out.thinking_summary) notes.push(`きろく: ${out.thinking_summary}`);
-  if (stamps.length) notes.push(`スタンプ獲得: ${stamps.join(", ")}`);
-  if (!out.voice_available && out.audio_error) notes.push(`音声なし: ${out.audio_error}`);
-  if (out.finished) notes.push(`終了 (${out.end_reason}) — 続きはダッシュボードで!`);
-  set("turnStatus", notes.join(" / "));
-  if (out.finished) {
-    ended = true;
-    if (mediaStream) { mediaStream.getTracks().forEach((t) => t.stop()); mediaStream = null; }
-    if (audioCtx && audioCtx.state !== "closed") audioCtx.close();
-    audioCtx = null;
-    refreshButtons();
-  }
-  play(out);
+  if (out.stamps_awarded?.length) notes.push(`スタンプを ゲット: ${out.stamps_awarded.join(" / ")}`);
+  if (out.finished) notes.push(`${out.end_reason ?? "おわり"} で おはなしを やすんだよ`);
+  set("turnStatus", notes.join("/") || "スタンプ げットは ないよ");
+  playAudio(out);
 }
-// WAV 再生（base64 → Audio）
-async function play(out) {
+async function playAudio(out) {
   if (!out.voice_available || !out.audio_wav_b64) return;
   try {
-    const bin = atob(out.audio_wav_b64);
-    const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
-    const url = URL.createObjectURL(new Blob([bytes], { type: "audio/wav" }));
-    const el = new Audio(url);
-    el.onended = () => URL.revokeObjectURL(url);
-    el.load();
-    await el.play();
-  } catch (err) {
-    const name = (err && err.name) || err.message || String(err);
-    set("turnStatus", `音声再生失敗: ${name}${name === "NotAllowedError" ? "（ブラウザの自動再生ブロックです。ページを一度クリックしてから、もう一度あいことばを押してください）" : ""}`);
-  }
+    const bytes = Uint8Array.from(atob(out.audio_wav_b64), (c) => c.charCodeAt(0));
+    const a = new Audio(URL.createObjectURL(new Blob([bytes], { type: "audio/wav" })));
+    await a.play();
+  } catch { /* 自動再生ブロック等は黙ってテキストだけで続ける */ }
 }
-
-// 16 kHz モノ PCM へ落とす + WAV ヘッダ付与（サーバーの認識は 16 kHz WAV）
-function downsample(buffer, fromRate, toRate) {
-  if (fromRate === toRate) return buffer;
+function downsample(buf, fromRate, toRate) {
+  if (fromRate === toRate) return buf;
   const ratio = fromRate / toRate;
-  const length = Math.floor(buffer.length / ratio);
-  const out = new Float32Array(length);
-  for (let i = 0; i < length; i++) {
-    const start = Math.floor(i * ratio), end = Math.min(Math.floor((i + 1) * ratio), buffer.length);
+  const out = new Float32Array(Math.floor(buf.length / ratio));
+  for (let i = 0; i < out.length; i++) {
+    const s = Math.floor(i * ratio), e = Math.min(Math.floor((i + 1) * ratio), buf.length);
     let sum = 0;
-    for (let j = start; j < end; j++) sum += buffer[j];
-    out[i] = sum / (end - start);
+    for (let j = s; j < e; j++) sum += buf[j];
+    out[i] = sum / (e - s);
   }
   return out;
 }
-function encodeWav(pcm, sampleRate) {
-  const buf = new DataView(new ArrayBuffer(44 + pcm.length * 2));
-  const text = (off, s) => { for (let i = 0; i < s.length; i++) buf.setUint8(off + i, s.charCodeAt(i)); };
-  text(0, "RIFF"); buf.setUint32(4, 36 + pcm.length * 2, true); text(8, "WAVE");
-  text(12, "fmt "); buf.setUint32(16, 16, true); buf.setUint16(20, 1, true); buf.setUint16(22, 1, true);
-  buf.setUint32(24, sampleRate, true); buf.setUint32(28, sampleRate * 2, true);
-  buf.setUint16(32, 2, true); buf.setUint16(34, 16, true);
-  text(36, "data"); buf.setUint32(40, pcm.length * 2, true);
-  for (let i = 0; i < pcm.length; i++) buf.setInt16(44 + i * 2, pcm[i], true);
-  return new Blob([buf.buffer], { type: "audio/wav" });
+function encodeWav(pcm, rate) {
+  const b = new DataView(new ArrayBuffer(44 + pcm.length * 2));
+  const put = (o, s) => { for (let i = 0; i < s.length; i++) b.setUint8(o + i, s.charCodeAt(i)); };
+  put(0, "RIFF"); b.setUint32(4, 36 + pcm.length * 2, true); put(8, "WAVE");
+  put(12, "fmt "); b.setUint32(16, 16, true); b.setUint16(20, 1, true); b.setUint16(22, 1, true);
+  b.setUint32(24, rate, true); b.setUint32(28, rate * 2, true); b.setUint16(32, 2, true); b.setUint16(34, 16, true);
+  put(36, "data"); b.setUint32(40, pcm.length * 2, true);
+  for (let i = 0; i < pcm.length; i++) b.setInt16(44 + i * 2, pcm[i], true);
+  return new Blob([b.buffer], { type: "audio/wav" });
 }
-refreshButtons();
+
+// ---- 保護者エリア ----
+$("parentBtn").addEventListener("click", () => { window.location.href = "/parent"; });
+
+document.addEventListener("DOMContentLoaded", () => { loadChildren().catch((e) => set("childPickStatus", `ようすを とれなかったよ: ${e.message}`)); });
+window.selectChild = selectChild; // devtools からも選べるようにする
 </script>
 </body>
 </html>

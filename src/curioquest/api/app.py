@@ -11,7 +11,7 @@ from collections import Counter
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from curioquest.api.deps import API, AppComponents, resolve_planner
 from curioquest.api.deps import cq as _cq
@@ -66,6 +66,15 @@ def _resolve_today_mission(comp: AppComponents, child: Child, day: str) -> Missi
 
 # デモ画面(static/index.html)。同じオリジンから API と音声ターンを呼ぶ。
 _STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+
+
+def _file_in_static(rel_path: str) -> FileResponse:
+    """静的ディレクトリの中からのみ返す(../ などで外に出させない)。"""
+    root = _STATIC_DIR.resolve()
+    target = (root / rel_path).resolve()
+    if (root not in target.parents) or not target.is_file():
+        raise HTTPException(status_code=404, detail="ページが見つからなかったよ")
+    return FileResponse(target, headers={"Cache-Control": "no-cache"})
 
 
 _RECENT_VIEW_LIMIT = 5
@@ -193,12 +202,19 @@ def create_app(components: AppComponents) -> FastAPI:
     # ------------------------------------------------------------ 基本
 
     @app.get("/", include_in_schema=False)
-    def demo_page() -> HTMLResponse:
-        """最小検証 Web ページを返す。ファイルは無視されない(GET / は常にこれ)。"""
-        index = _STATIC_DIR / "index.html"
-        if not index.is_file():
-            raise HTTPException(status_code=404, detail="index.html がありません: " + str(index))
-        return HTMLResponse(index.read_bytes(), media_type="text/html; charset=utf-8")
+    def home_page() -> FileResponse:
+        """子ども向けホーム画面。保護者画面は /parent、最小検証ページは /curio に置いた。"""
+        return _file_in_static("index.html")
+
+    @app.get("/parent", include_in_schema=False)
+    def parent_page() -> FileResponse:
+        """保護者ダッシュボード。PIN で守られる (02-features 3-3)。"""
+        return _file_in_static("parent.html")
+
+    @app.get("/curio", include_in_schema=False)
+    def curio_page() -> FileResponse:
+        """従来からの最小検証ページ。実機確認用の器具なので経路を変えて残した。"""
+        return _file_in_static("assets/curio.html")
 
     @app.get("/healthz")
     def healthz(request: Request) -> dict[str, str]:
