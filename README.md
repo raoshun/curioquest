@@ -60,6 +60,7 @@ AIは正解を提示することを主目的とせず、問いかけやヒント
 - [x] 会話一覧（おわった会話の履歴）とおとな向け読み取りAPI（ダッシュボード・思考記録・スタンプ数）
 - [x] おとなエリアのPIN保護（ハッシュ化・試行回数制限・セションクッキー・PIN変更時の全端末解除）
 - [ ] Phase 5（家庭内実運用）→ [docs/design/06-roadmap.md](docs/design/06-roadmap.md) 参照
+  - [x] SQLite 自動バックアップ（`curioquest-backup` サイドカー。日次 gzip・世代ローテート・整合性チェック付き復元）
 
 ## 起動方法
 
@@ -75,6 +76,13 @@ docker compose up --build
 - 日誌と日次クエストの日付境界はコンテナ内 TZ 基準（既定 `Asia/Tokyo`、`.env` の `CQ_TZ` で変更）。モノリス direct 起動ではホストの TZ がそのまま使われる
 - LLM はデフォルトでホスト側の Ollama（`host.docker.internal:11434/v1`）を使う。LOCAL LLM（vLLM 等）に合わせて `.env` の `CURIOQUEST_LLM_BASE_URL` / `CURIOQUEST_LLM_MODEL` を設定する
 - VOICEVOX Engine は compose 内で併走し、ホストには公開しない。STT（faster-whisper）はバックエンドプロセス内に組み込まれており、認識モデルは named volume にキャッシュする
+- バックアップ: `backup` サービスが每天 `curioquest-data` 内の DB を整合性のある形でスナップショットし、`curioquest-backups` ボリュームへ gzip で保存する（既定で最新 7 世代・間隔 86400 秒。`.env` の `CQ_BACKUP_KEEP` / `CQ_BACKUP_INTERVAL_SECONDS` で変更）。復元はサーバーを止めてから:
+
+  ```bash
+  docker compose stop backend
+  docker compose run --rm backup curioquest-backup --db /data/curioquest.db --restore /backups/curioquest-YYYYmmdd-HHMMSS.sqlite.gz
+  docker compose start backend
+  ```
 
 ### ローカル開発（Python 3.12 / uv）
 
