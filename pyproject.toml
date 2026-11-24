@@ -22,6 +22,7 @@ stt = [
 
 [project.scripts]
 curioquest-api = "curioquest.api.main:main"
+curioquest-backup = "curioquest.backup:main"
 
 [dependency-groups]
 dev = [

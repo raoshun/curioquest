@@ -49,6 +49,30 @@ services:
     # 50021 ポートは compose 内部だけで使い、ホストへは公開しない
     restart: unless-stopped
 
+  backup:
+    # Phase 5（家庭内実運用）: スタンプ・Memory・会話履歴の自動バックアップ。
+    # 同じイメージの curioquest-backup を定期的に実行するだけのサイドカー。
+    # オンラインバックアップなので backend を止める必要はない。
+    # アーカイブ名の日時は UTC（CURIOQUEST_BACKUP_* は引数でも指定可能）。
+    build:
+      context: .
+    command:
+      - curioquest-backup
+      - --db
+      - /data/curioquest.db
+      - --dest
+      - /backups
+      - --interval
+      - "${CQ_BACKUP_INTERVAL_SECONDS:-86400}"
+    environment:
+      CURIOQUEST_BACKUP_KEEP: ${CQ_BACKUP_KEEP:-7}
+    volumes:
+      # バックアップは読むだけなのでデータボリュームは read-only でマウント
+      - curioquest-data:/data:ro
+      - curioquest-backups:/backups
+    restart: unless-stopped
+
 volumes:
   curioquest-data:
   curioquest-hf-cache:
+  curioquest-backups:
