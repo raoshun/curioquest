@@ -256,3 +256,58 @@ class TestTodayMission:
         got = store.get_today_mission(child.id, "2026-11-21")
         assert got is not None and got.id == mission.id
         assert store.get_today_mission(child.id, "2026-11-22") is None
+
+
+def test_list_session_summaries_shows_finished_conversations(
+    store: DataStore, family_id: str
+) -> None:
+    """会話一覧は終了したものだけ・新しい順。Turns は子どもの発話数 (02-features.md 9-2)。"""
+    child = store.create_child(family_id, nickname="あさえ")
+    other_child = store.create_child(family_id, nickname="まる")
+    first = make_mission(store)
+    second = store.upsert_mission(
+        Mission(
+            id="mystery_001",
+            category=MissionCategory.REASONING,
+            title="かぎは どこに かくれた？",
+            difficulty=1,
+            target_skills=["observation"],
+            character_id="professor",
+            estimated_minutes=3,
+            initial_question="どこだと おもう？",
+            completion_conditions=["shared_idea"],
+        )
+    )
+    older = store.create_session(child.id, first.id, "professor", DialogueState.COMPLETE)
+    store.update_session_state(older.id, DialogueState.COMPLETE, MissionEndReason.SHARED_IDEA)
+    store.append_message(older.id, child.id, MessageRole.CHILD, "はじめまして")
+    store.append_message(older.id, child.id, MessageRole.CHILD, "しった!")
+    store.append_message(older.id, child.id, MessageRole.ASSISTANT, "よかった!")
+    newer = store.create_session(child.id, second.id, "professor", DialogueState.COMPLETE)
+    store.update_session_state(newer.id, DialogueState.COMPLETE, MissionEndReason.CHILD_EXIT)
+    store.append_message(newer.id, child.id, MessageRole.CHILD, "みつかった!")
+    active = store.create_session(other_child.id, first.id, "professor", DialogueState.QUESTION)
+
+    rows = store.list_session_summaries(child.id)
+
+    assert [row.mission_id for row in rows] == [second.id, first.id]
+    assert [row.turn_count for row in rows] == [1, 2]
+    row = rows[0]
+    assert (row.id, row.turn_count, row.end_reason) == (newer.id, 1, MissionEndReason.CHILD_EXIT)
+    assert row.mission_title == "かぎは どこに かくれた？"
+    assert row.started_at and row.ended_at
+    assert row.child_id == child.id
+    assert active.id not in [r.id for r in rows]
+
+
+def test_list_session_summaries_honours_limit(store: DataStore, family_id: str) -> None:
+    child = store.create_child(family_id, nickname="あさえ")
+    mission = make_mission(store)
+    for _ in range(3):
+        session = store.create_session(child.id, mission.id, "professor", DialogueState.COMPLETE)
+        store.update_session_state(session.id, DialogueState.COMPLETE, MissionEndReason.SHARED_IDEA)
+
+    rows = store.list_session_summaries(child.id, limit=2)
+
+    assert len(rows) == 2
+    assert all(row.turn_count == 0 for row in rows)

@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CurioQuest 最小検証ページ</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 1.5rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.3rem; }
+  fieldset { border: 1px solid #ccc; border-radius: 8px; margin-bottom: 1rem; padding: 0.8rem; }
+  legend { font-weight: bold; }
+  button { padding: 0.5rem 1rem; border-radius: 8px; border: 1px solid #888; background: #f7f7f7; }
+  button.record { background: #e74c3c; color: #fff; border-color: #a3359a; }
+  .transcript { background: #f0f4ff; border-radius: 8px; padding: 0.6rem; min-height: 1.5rem; }
+  .reply { background: #fff7e6; border-radius: 8px; padding: 0.6rem; min-height: 1.5rem; margin-top: 0.6rem; } .status { color: #666; font-size: 0.85rem; }
+  #timer { font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<h1>CurioQuest 最小検証ページ</h1>
+<p class="status">同じオリジンの <code>/api/</code> を呼び、実機で MVP の流れを確認するためのページです。</p>
+
+<fieldset>
+  <legend>1. こどもとミッション</legend>
+  <button id="startBtn">はじめる</button>
+  <div class="status" id="metaStatus">未開始</div>
+</fieldset>
+
+<fieldset>
+  <legend>2. マイクにお話し</legend>
+  <button id="micBtn" disabled>マイクにお話し</button>
+  <span id="timer">0.0s</span>
+  <div class="status" id="recStatus">マイクはボタンを押した時だけ使います（保存は音声のみ、サーバーは認識後にテキストだけ扱う）</div>
+</fieldset>
+
+<fieldset>
+  <legend>3. あいことば</legend>
+  <button id="stopWordHi" disabled>ハイ!</button>
+  <button id="stopWordYada" disabled>やだ!</button>
+  <div class="status">「やだ!」は何度でも優しく止めます（回数を使いません）</div>
+</fieldset>
+
+<div class="transcript" id="transcript">（あなたの発話はここに出ます）</div>
+<div class="reply" id="reply">（キャラクターの返事はここに出ます）</div>
+<div class="status" id="turnStatus"></div>
+
+<script>
+// 最小検証: 子作成 -> 今日開始 -> 録音 -> WAV -> POST /api/.../voice -> 再生/終了表示
+const $ = (id) => document.getElementById(id);
+const api = async (path, options = {}) => {
+  const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try { const j = await res.json(); detail = j.detail ?? JSON.stringify(j).slice(0, 120); } catch { /* JSON 以外の本文は無視 */ }
+    throw new Error(`HTTP ${res.status}: ${String(detail).slice(0, 160)}`);
+  }
+  if (res.status === 204) return null;
+  return res.json();
+};
+const set = (id, text) => { $(id).textContent = text; };
+const TURN_WAIT = "送信しました。キャラクターが考えています…（この環境では 1 返事に 30〜90 秒かかることがあります）";
+
+let childId = null, session = null;
+let busy = false, started = false, ended = false;
+function refreshButtons() {
+  const usable = started && !ended;
+  $("startBtn").disabled = started || busy;
+  // 録音中の「おわったよ」停止は常に押せるようにする
+  $("micBtn").disabled = !usable || (busy && !recording);
+  $("stopWordHi").disabled = !usable || busy || recording;
+  $("stopWordYada").disabled = !usable || busy || recording;
+}
+let mediaStream = null, sourceNode = null, audioCtx = null, processor = null;
+let recording = false, recordedChunks = [], recordStart = 0, timerId = null;
+
+$("startBtn").addEventListener("click", async () => {
+  if (busy || started) return;
+  busy = true; refreshButtons();
+  try {
+    set("metaStatus", "こどもを登録しています…");
+    const child = await api("/api/children", { method: "POST", body: JSON.stringify({ nickname: "Web検証" }) });
+    childId = child.id;
+    set("metaStatus", "こどもを作成しました。今日のセッションを開始します…（この環境では 30〜90 秒かかります。このままお待ちください）");
+    session = await api("/api/sessions", { method: "POST", body: JSON.stringify({ child_id: childId }) });
+    started = true;
+    set("metaStatus", `ミッション「${session.mission_id}」開始（状態: ${session.state}）。下のマイクボタンかあいことばを使ってください`);
+  } catch (err) { set("metaStatus", `開始失敗: ${err.message}`); }
+  finally { busy = false; refreshButtons(); }
+});
+
+async function startRecording() {
+  if (busy) { set("recStatus", "いまキャラクターが返事中です。表示されてから録音してください"); return; }
+  set("recStatus", "マイク準備中…（許可を求められたら「許可」を押してください）");
+  try {
+    // AudioContext は getUserMedia と同じクリック操作の中で同期的に生成・再開する。
+    // await の後で作ると自動再生ポリシーで「停止」のままになり、無音データしか採れない。
+    audioCtx = audioCtx ?? new AudioContext();
+    if (audioCtx.state === "suspended") await audioCtx.resume();
+    const source = await captureSource();
+    recordedChunks = [];
+    // PCM を集めて録音中に WAV 化するため AudioContext を使う
+    sourceNode = audioCtx.createMediaStreamSource(source);
+    processor = audioCtx.createScriptProcessor(4096, 1, 1);
+    const inputRate = audioCtx.sampleRate;
+    processor.onaudioprocess = (e) => {
+      const data = downsample(e.inputBuffer.getChannelData(0), inputRate, 16000);
+      const pcm = new Int16Array(data.length);
+      for (let i = 0; i < data.length; i++) pcm[i] = Math.max(-32768, Math.min(32767, Math.round(data[i] * 32767)));
+      recordedChunks.push(pcm);
+    };
+    sourceNode.connect(processor);
+    processor.connect(audioCtx.destination);
+    recording = true;
+    recordStart = performance.now();
+    timerId = setInterval(() => set("timer", `${((performance.now() - recordStart) / 1000).toFixed(1)}s`), 100);
+    $("micBtn").textContent = "おわったよ";
+    $("micBtn").classList.add("record");
+    set("recStatus", "録音中… もう一度押すと送信します");
+    refreshButtons();
+  } catch (err) {
+    const name = (err && err.name) || String(err);
+    if (name === "NotAllowedError" || name === "SecurityError")
+      set("recStatus", "マイクが拒否されました。アドレスバーの 🔒（サイト情報）からマイクを「許可」に変えて再読み込みしてください");
+    else if (name === "NotFoundError" || name === "DevicesNotFoundError")
+      set("recStatus", "マイクが見つかりませんでした。PC のマイク接続を確認してください");
+    else if (name === "NotReadableError" || name === "AbortError")
+      set("recStatus", "マイクを別のアプリが使用中か、マイクの読み取りに失敗しました。他のアプリを閉じて再試行してください");
+    else if (name === "TypeError")
+      set("recStatus", "ブラウザがマイクを使えない文脈です（https か localhost で開いていますか?）");
+    else set("recStatus", `マイク準備に失敗しました (${name})`);
+  }
+}
+
+function abortRecording(message) {
+  clearInterval(timerId);
+  recording = false;
+  if (processor) { processor.onaudioprocess = null; processor.disconnect(); processor = null; }
+  if (sourceNode) { sourceNode.disconnect(); sourceNode = null; }
+  recordedChunks = [];
+  $("micBtn").textContent = "マイクにお話し";
+  $("micBtn").classList.remove("record");
+  set("recStatus", message);
+  refreshButtons();
+}
+
+function stopRecording() {
+  const seconds = Math.max(1, Math.round((performance.now() - recordStart) / 1000));
+  clearInterval(timerId);
+  recording = false;
+  // 最後の 1 ブロック (~0.1〜0.25 秒) は取りこぼすがデモ用途では許容する
+  if (processor) { processor.onaudioprocess = null; processor.disconnect(); processor = null; }
+  if (sourceNode) { sourceNode.disconnect(); sourceNode = null; }
+  $("micBtn").textContent = "マイクにお話し";
+  $("micBtn").classList.remove("record");
+  const total = recordedChunks.reduce((n, c) => n + c.length, 0);
+  const pcm = new Int16Array(total);
+  let off = 0;
+  for (const c of recordedChunks) { pcm.set(c, off); off += c.length; }
+  recordedChunks = [];
+  refreshButtons();
+  if (total === 0) { set("recStatus", "マイクの音を集められませんでした（送信していません）。数値が動いていなければ OS のマイク設定を確認してください"); return; }
+  postVoice(encodeWav(pcm, 16000), Math.min(seconds, 3600));
+}
+
+$("micBtn").addEventListener("click", () => { recording ? stopRecording() : startRecording(); });
+async function captureSource() {
+  if (mediaStream && mediaStream.active) return mediaStream;
+  mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const track = mediaStream.getAudioTracks()[0];
+  if (track) track.addEventListener("ended", () => { mediaStream = null; if (recording) abortRecording("録音の途中でマイクが外れました（送信していません）"); });
+  return mediaStream;
+}
+$("stopWordHi").addEventListener("click", () => turn("ハイ!"));
+$("stopWordYada").addEventListener("click", () => turn("やだ!"));
+
+// 1 ターン（音声送信）: 認識失敗は 503 → 回数を消費していない旨を伝える
+async function postVoice(wav, seconds) {
+  if (!session || busy) { set("recStatus", "いま処理中です。完了してから録音してください"); return; }
+  busy = true; refreshButtons();
+  set("turnStatus", "音声を送信中です…（認識から返事・合成まで 1〜2 分かかることがあります。このままお待ちください）");
+  try {
+    const res = await fetch(`/api/sessions/${session.session_id}/voice?seconds_spent=${seconds}`, {
+      method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: wav });
+    if (!res.ok) {
+      let detail = res.statusText;
+      try { detail = (await res.json()).detail ?? detail; } catch { /* JSON でない本文は無視 */ }
+      detail = typeof detail === "string" ? detail : JSON.stringify(detail);
+      const why = res.status === 503 ? String(detail).includes("音声認識")
+        ? "（このターンは実行されておらず、回数は減っていません）" : "（この設定では音声を入力できません）" : "";
+      set("turnStatus", `音声ターン失敗: ${detail} ${why}`);
+      return;
+    }
+    const out = await res.json();
+    set("recStatus", "音声を送信し終えました。返事と音を待っています…");
+    renderTurn(audioText(out), out, out.stamps_awarded ?? []);
+  } catch (err) {
+    set("turnStatus", `通信失敗: ${err.message}（サーバはターンを実行済みで回数が減っている可能性があります）`);
+  } finally {
+    busy = false; refreshButtons();
+  }
+}
+// テキストターン（あいことば等）
+async function turn(text) {
+  if (!session) { set("turnStatus", "まず「はじめる」を押してセッションを開始してください"); return; }
+  if (busy) { set("turnStatus", "はいまキャラクターが返事中です。完了してからもう一度押してください"); return; }
+  busy = true; refreshButtons();
+  set("turnStatus", TURN_WAIT);
+  try {
+    const body = { text, seconds_spent: 0 };
+    const out = await api(`/api/sessions/${session.session_id}/message`, { method: "POST", body: JSON.stringify(body) });
+    renderTurn(text, out, out.stamps_awarded ?? []);
+  } catch (err) { set("turnStatus", `ターン失敗: ${err.message}（HTTP 4xx は実行前に弾かれたので回数は減っていません）`); }
+  finally { busy = false; refreshButtons(); }
+}
+function audioText(out) { return out.voice_available ? "(音声を再生しました)" : ""; }
+function renderTurn(transcriptText, out, stamps) {
+  if (transcriptText) set("transcript", `あなた: ${transcriptText}`);
+  set("reply", `キャラクター: ${out.reply}`);
+  const notes = [];
+  if (out.thinking_summary) notes.push(`きろく: ${out.thinking_summary}`);
+  if (stamps.length) notes.push(`スタンプ獲得: ${stamps.join(", ")}`);
+  if (!out.voice_available && out.audio_error) notes.push(`音声なし: ${out.audio_error}`);
+  if (out.finished) notes.push(`終了 (${out.end_reason}) — 続きはダッシュボードで!`);
+  set("turnStatus", notes.join(" / "));
+  if (out.finished) {
+    ended = true;
+    if (mediaStream) { mediaStream.getTracks().forEach((t) => t.stop()); mediaStream = null; }
+    if (audioCtx && audioCtx.state !== "closed") audioCtx.close();
+    audioCtx = null;
+    refreshButtons();
+  }
+  play(out);
+}
+// WAV 再生（base64 → Audio）
+async function play(out) {
+  if (!out.voice_available || !out.audio_wav_b64) return;
+  try {
+    const bin = atob(out.audio_wav_b64);
+    const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+    const url = URL.createObjectURL(new Blob([bytes], { type: "audio/wav" }));
+    const el = new Audio(url);
+    el.onended = () => URL.revokeObjectURL(url);
+    el.load();
+    await el.play();
+  } catch (err) {
+    const name = (err && err.name) || err.message || String(err);
+    set("turnStatus", `音声再生失敗: ${name}${name === "NotAllowedError" ? "（ブラウザの自動再生ブロックです。ページを一度クリックしてから、もう一度あいことばを押してください）" : ""}`);
+  }
+}
+
+// 16 kHz モノ PCM へ落とす + WAV ヘッダ付与（サーバーの認識は 16 kHz WAV）
+function downsample(buffer, fromRate, toRate) {
+  if (fromRate === toRate) return buffer;
+  const ratio = fromRate / toRate;
+  const length = Math.floor(buffer.length / ratio);
+  const out = new Float32Array(length);
+  for (let i = 0; i < length; i++) {
+    const start = Math.floor(i * ratio), end = Math.min(Math.floor((i + 1) * ratio), buffer.length);
+    let sum = 0;
+    for (let j = start; j < end; j++) sum += buffer[j];
+    out[i] = sum / (end - start);
+  }
+  return out;
+}
+function encodeWav(pcm, sampleRate) {
+  const buf = new DataView(new ArrayBuffer(44 + pcm.length * 2));
+  const text = (off, s) => { for (let i = 0; i < s.length; i++) buf.setUint8(off + i, s.charCodeAt(i)); };
+  text(0, "RIFF"); buf.setUint32(4, 36 + pcm.length * 2, true); text(8, "WAVE");
+  text(12, "fmt "); buf.setUint32(16, 16, true); buf.setUint16(20, 1, true); buf.setUint16(22, 1, true);
+  buf.setUint32(24, sampleRate, true); buf.setUint32(28, sampleRate * 2, true);
+  buf.setUint16(32, 2, true); buf.setUint16(34, 16, true);
+  text(36, "data"); buf.setUint32(40, pcm.length * 2, true);
+  for (let i = 0; i < pcm.length; i++) buf.setInt16(44 + i * 2, pcm[i], true);
+  return new Blob([buf.buffer], { type: "audio/wav" });
+}
+refreshButtons();
+</script>
+</body>
+</html>

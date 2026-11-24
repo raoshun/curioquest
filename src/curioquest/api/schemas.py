@@ -1,7 +1,7 @@
-"""REST API のリクエスト・レスポンスモデル（03-architecture 12）。
+"""REST API のリクエスト・レスポンスモデル(03-architecture 12)。
 
-ドメインモデルをそのまま晒さず、API として安定した形（enum は文字列、
-内部専用料理除外）へ変換する境界にする。
+ドメインモデルをそのまま晒さず、API として安定した形(enum は文字列、
+内部専用料理除外)へ変換する境界にする。
 """
 
 from __future__ import annotations
@@ -10,12 +10,21 @@ import base64
 
 from pydantic import BaseModel, Field
 
-from curioquest.domain.models import Character, Child, Memory, Mission, Stamp
+from curioquest.domain.models import (
+    Character,
+    Child,
+    ConversationSummary,
+    Memory,
+    Mission,
+    MissionResult,
+    Stamp,
+    ThinkingRecord,
+)
 from curioquest.engine import TurnResult
 
 
 class ChildCreate(BaseModel):
-    """子どもの登録（保護者画面から）。「声でスタート」は 1 画面 1 タップで済むことを優先し、
+    """子どもの登録(保護者画面から)。「声でスタート」は 1 画面 1 タップで済むことを優先し、
     ニックネーム以外すべて省略可能とする。"""
 
     nickname: str = Field(min_length=1, max_length=40)
@@ -26,7 +35,7 @@ class ChildCreate(BaseModel):
 
 
 class ChildPatch(BaseModel):
-    """子どもの更新。変更する項目だけを渡す（PATCH 意味論）。"""
+    """子どもの更新。変更する項目だけを渡す(PATCH 意味論)。"""
 
     nickname: str | None = Field(default=None, min_length=1, max_length=40)
     birthday: str | None = None
@@ -162,7 +171,7 @@ class VoiceOut(TurnOut):
     def from_turn(
         cls, turn: TurnOut, wav: bytes | None, audio_error: str | None = None
     ) -> VoiceOut:
-        """テキストターン結果に合成音（WAV バイト列）を添えて組み立てる。
+        """テキストターン結果に合成音(WAV バイト列)を添えて組み立てる。
 
         wav が None のときは audio_error があってもテキストの応答は有効なので、
         finished や reply などの対話結果はそのまま返す。
@@ -211,6 +220,86 @@ class MemoryOut(BaseModel):
         )
 
 
+class ConversationOut(BaseModel):
+    """会話一覧の行。いつ・どのミッションを・何ターンで終えたか (02-features.md 9-2)。"""
+
+    id: str
+    mission_id: str
+    mission_title: str
+    character_id: str
+    started_at: str | None = None
+    ended_at: str | None = None
+    end_reason: str | None = None
+    turn_count: int = 0
+
+    @classmethod
+    def from_summary(cls, summary: ConversationSummary) -> ConversationOut:
+        return cls(
+            id=summary.id,
+            mission_id=summary.mission_id,
+            mission_title=summary.mission_title,
+            character_id=summary.character_id,
+            started_at=summary.started_at,
+            ended_at=summary.ended_at,
+            end_reason=str(summary.end_reason) if summary.end_reason else None,
+            turn_count=summary.turn_count,
+        )
+
+
+class InterestOut(BaseModel):
+    topic: str
+    count: int
+
+
+class ThinkingOut(BaseModel):
+    id: str
+    signals: list[str] = Field(default_factory=list)
+    summary: str | None = None
+    created_at: str | None = None
+
+    @classmethod
+    def from_record(cls, record: ThinkingRecord) -> ThinkingOut:
+        return cls(
+            id=record.id,
+            signals=[str(signal) for signal in record.signals],
+            summary=record.summary,
+            created_at=record.created_at,
+        )
+
+
+class MissionHistoryOut(BaseModel):
+    mission_id: str
+    mission_title: str
+    outcome: str
+    finished_at: str | None = None
+    day: str | None = None
+
+    @classmethod
+    def from_result(
+        cls, result: MissionResult, mission_title: str, day: str | None
+    ) -> MissionHistoryOut:
+        return cls(
+            mission_id=result.mission_id,
+            mission_title=mission_title,
+            outcome=str(result.outcome),
+            finished_at=result.finished_at,
+            day=day,
+        )
+
+
+class ChildProgressOut(BaseModel):
+    """子画面ホーム用の進行状況。今日・残り時間・今日の達成数 (AC-04 の「やめる」判断材料)。"""
+
+    day: str
+    today_mission: MissionOut | None = None
+    used_seconds_today: int = 0
+    daily_limit_minutes: int = 0
+    remaining_seconds: int | None = None
+    missions_finished_today: int = 0
+    missions_finished_total: int = 0
+    stamps_earned: int = 0
+
+
 class DashboardChildOut(BaseModel):
     child_id: str
     nickname: str
@@ -219,11 +308,31 @@ class DashboardChildOut(BaseModel):
     daily_limit_minutes: int = 0
     missions_finished_today: int = 0
     stamps_earned: int = 0
+    interests: list[InterestOut] = Field(default_factory=list)
+    recent_thinking: list[ThinkingOut] = Field(default_factory=list)
+    recent_missions: list[MissionHistoryOut] = Field(default_factory=list)
+    recent_conversations: list[ConversationOut] = Field(default_factory=list)
 
 
 class DashboardOut(BaseModel):
     day: str
     children: list[DashboardChildOut] = Field(default_factory=list)
+
+
+class PinStatusOut(BaseModel):
+    """PIN の設定状況。保護者画面はこれを見て PIN 入力を出すか決める (02-features 3-3)。"""
+
+    is_set: bool
+    authenticated: bool = False
+
+
+class PinIn(BaseModel):
+    pin: str
+
+
+class PinChangeIn(BaseModel):
+    old_pin: str
+    new_pin: str
 
 
 def character_out(character: Character) -> CharacterOut:

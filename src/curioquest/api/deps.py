@@ -18,7 +18,7 @@ from curioquest.config import Settings, settings_from_env
 from curioquest.db.database import Database
 from curioquest.db.seed import seed_default_data
 from curioquest.db.store import DataStore
-from curioquest.engine import DialogueEngine
+from curioquest.engine import DailyMissionPlanner, DialogueEngine, MissionPlanner
 from curioquest.llm.factory import provider_from_settings
 
 API = "/api"
@@ -41,8 +41,20 @@ class AppComponents:
     store: DataStore
     engine: DialogueEngine
     family_id: str
+    planner: MissionPlanner | None = None
     stt: SpeechToText | None = None
     tts: TextToSpeech | None = None
+
+
+def resolve_planner(components: AppComponents) -> MissionPlanner:
+    """今日のミッションを決める planner を取り出す。
+
+    組み立て時に渡していない場合（テストや小規模な組み替え）はその場で作る。
+    対話エンジンと同じ LLM を使うので、応答とお題が同じ子モデルから出る。
+    """
+    if components.planner is not None:
+        return components.planner
+    return DailyMissionPlanner(store=components.store, llm=components.engine.llm)
 
 
 def build_components(settings: Settings | None = None) -> AppComponents:
@@ -59,8 +71,20 @@ def build_components(settings: Settings | None = None) -> AppComponents:
     store = DataStore(db)
     family_id = seed_default_data(store)
     engine = DialogueEngine(store=store, llm=provider_from_settings(resolved))
+    planner = DailyMissionPlanner(
+        store=store,
+        llm=engine.llm,
+        generation_enabled=resolved.mission_generation_enabled,
+    )
     stt, tts = build_audio(resolved)
-    return AppComponents(store=store, engine=engine, family_id=family_id, stt=stt, tts=tts)
+    return AppComponents(
+        store=store,
+        engine=engine,
+        family_id=family_id,
+        planner=planner,
+        stt=stt,
+        tts=tts,
+    )
 
 
 def build_audio(settings: Settings) -> tuple[SpeechToText, TextToSpeech]:

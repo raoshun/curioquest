@@ -10,6 +10,7 @@ from curioquest.db.database import Database
 from curioquest.domain.models import (
     Character,
     Child,
+    ConversationSummary,
     DialogueSession,
     DialogueState,
     Family,
@@ -373,6 +374,51 @@ class DataStore:
                 started_at=r["started_at"],
             )
             for r in rows
+        ]
+
+    def list_session_summaries(
+        self, child_id: str, *, limit: int | None = None
+    ) -> list[ConversationSummary]:
+        """終端した会話を一覧化する (02-features.md 9-2)。
+
+        Turns は子どもが発話したメッセージの数（ダミーの system メッセージは数えない）。
+        """
+        sql = """
+            SELECT s.id,
+                   s.child_id,
+                   s.mission_id,
+                   m.title AS mission_title,
+                   s.character_id,
+                   s.started_at,
+                   s.ended_at,
+                   s.end_reason,
+                   (
+                       SELECT COUNT(*)
+                       FROM messages t
+                       WHERE t.session_id = s.id AND t.role = 'child'
+                   ) AS turn_count
+            FROM sessions s
+            JOIN missions m ON m.id = s.mission_id
+            WHERE s.child_id = ? AND s.ended_at IS NOT NULL
+            ORDER BY s.started_at DESC, s.rowid DESC
+        """
+        params: list[Any] = [child_id]
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+        return [
+            ConversationSummary(
+                id=row["id"],
+                child_id=row["child_id"],
+                mission_id=row["mission_id"],
+                mission_title=row["mission_title"],
+                character_id=row["character_id"],
+                started_at=row["started_at"],
+                ended_at=row["ended_at"],
+                end_reason=MissionEndReason(row["end_reason"]) if row["end_reason"] else None,
+                turn_count=int(row["turn_count"]),
+            )
+            for row in self.db.query(sql, tuple(params))
         ]
 
     # ---------------------------------------------------------------- message

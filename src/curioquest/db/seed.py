@@ -1,6 +1,6 @@
 """初期データのシード。
 
-キャラクター 3 種類・定番ミッション 3 カテゴリ・スタンプ 6 種類を流し込む。
+キャラクター 3 種類・定番ミッション 3 カテゴリ計 9 問・スタンプ 6 種類を流し込む。
 システムプロンプトには 02-features.md 4-2 の対話基本ルールを含む。
 VOICEVOX の話者IDは環境依存のため、ここでは確定させない（None → 設定で上書き）。
 """
@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from curioquest.db.store import DataStore
 from curioquest.domain.models import Character, Mission, MissionCategory, Stamp
+from curioquest.engine.rules import SHARED_IDEA_CONDITION
 
 # 対話の基本ルール（02-features.md 4-2）と安全要件（05-safety-quality.md）。
 # 全キャラクターのプロンプト末尾に共通で付与する。
@@ -97,44 +98,133 @@ DEFAULT_CHARACTERS: list[Character] = [
     ),
 ]
 
-# 定番問題データベース（6-3 ハイブリッド方式の「定番問題」側。1カテゴリ1問から開始）
+
+# 定番問題データベース（6-3 ハイブリッド方式の「定番問題」側）。3 カテゴリ × 3 問。
+# 「自分の考えを説明できたらクリア」は共通の終了条件（6-4）。正解・不正解は判定しない。
+def _classic(
+    mission_id: str,
+    category: MissionCategory,
+    title: str,
+    difficulty: int,
+    target_skills: list[str],
+    character_id: str,
+    estimated_minutes: int,
+    initial_question: str,
+) -> Mission:
+    return Mission(
+        id=mission_id,
+        category=category,
+        title=title,
+        difficulty=difficulty,
+        target_skills=list(target_skills),
+        character_id=character_id,
+        estimated_minutes=estimated_minutes,
+        initial_question=initial_question,
+        completion_conditions=[SHARED_IDEA_CONDITION],
+    )
+
+
 DEFAULT_MISSIONS: list[Mission] = [
-    Mission(
-        id="why_001",
-        category=MissionCategory.CURIOSITY,
-        title="そらは どうして あおい？",
-        difficulty=1,
-        target_skills=["observation", "hypothesis", "reasoning"],
-        character_id="professor",
-        estimated_minutes=3,
-        initial_question="そらは なんで あおいと おもう？",
-        completion_conditions=["child_has_shared_an_idea"],
+    # --- なぜなぜ探検（curiosity）: 観察して仮説を立てる ---
+    _classic(
+        "why_001",
+        MissionCategory.CURIOSITY,
+        "そらは どうして あおい？",
+        1,
+        ["observation", "hypothesis", "reasoning"],
+        "professor",
+        3,
+        "そらは なんで あおいと おもう？",
     ),
-    Mission(
-        id="mystery_001",
-        category=MissionCategory.REASONING,
-        title="きえた かさの なぞ",
-        difficulty=1,
-        target_skills=["observation", "hypothesis"],
-        character_id="detective",
-        estimated_minutes=4,
-        initial_question=(
+    _classic(
+        "why_002",
+        MissionCategory.CURIOSITY,
+        "お月さまは どうして ついてくる？",
+        1,
+        ["observation", "hypothesis"],
+        "professor",
+        3,
+        "おさんぽしてると お月さまが ついてくる きが するね。なんでだと おもう？",
+    ),
+    _classic(
+        "why_003",
+        MissionCategory.CURIOSITY,
+        "アリは どうして まっすぐ あるけるの？",
+        2,
+        ["observation", "hypothesis", "reasoning"],
+        "professor",
+        4,
+        "アリさんが エサまで まっすぐ あるく ことが あるよ。なんで 道が わかるのだとおもう？",
+    ),
+    # --- なぞとき探偵（reasoning）: 手がかりから考える ---
+    _classic(
+        "mystery_001",
+        MissionCategory.REASONING,
+        "きえた かさの なぞ",
+        1,
+        ["observation", "hypothesis"],
+        "detective",
+        4,
+        (
             "かさ が なくなった のだよ。"
             "お部屋は からっぽ。あいた まど と ぬれた 床 が 手がかり。"
             "どんな ことが あったと おもう？"
         ),
-        completion_conditions=["child_has_shared_an_idea"],
     ),
-    Mission(
-        id="if_001",
-        category=MissionCategory.IMAGINATION,
-        title="いろが ない せかい",
-        difficulty=1,
-        target_skills=["imagination", "expression"],
-        character_id="artist",
-        estimated_minutes=3,
-        initial_question="せかいから いろが ぜんぶ きえちゃったら、くらすって どんな かんじ？",
-        completion_conditions=["child_has_shared_an_idea"],
+    _classic(
+        "mystery_002",
+        MissionCategory.REASONING,
+        "あいた おかしの ふくろ",
+        2,
+        ["observation", "hypothesis", "reasoning"],
+        "detective",
+        4,
+        (
+            "テーブルの 上に あいた おかしの ふくろ。まわりには カラが 2まい。"
+            "イスが 少し 出ていて、だれも いないよ。どんな ことが あったとおもう？"
+        ),
+    ),
+    _classic(
+        "mystery_003",
+        MissionCategory.REASONING,
+        "よるの てんじょうの おと",
+        2,
+        ["observation", "hypothesis", "communication"],
+        "detective",
+        4,
+        "ねる まえに てんじょうから 「ぎしっ」っと おとが したよ。上には だれも いない。"
+        "どんな ことが あると おもう？",
+    ),
+    # --- もしもワールド（imagination）: 広げてつむ ---
+    _classic(
+        "if_001",
+        MissionCategory.IMAGINATION,
+        "いろが ない せかい",
+        1,
+        ["imagination", "expression"],
+        "artist",
+        3,
+        "せかいから いろが ぜんぶ きえちゃったら、くらすって どんな かんじ？",
+    ),
+    _classic(
+        "if_002",
+        MissionCategory.IMAGINATION,
+        "じゆうに とべるとしたら",
+        1,
+        ["imagination", "expression"],
+        "artist",
+        3,
+        "あなたが じゆうに とべる ように なるよ。まず どこへ 行って、なにが 見えてそう？",
+    ),
+    _classic(
+        "if_003",
+        MissionCategory.IMAGINATION,
+        "きみの 国の 大冒険",
+        2,
+        ["imagination", "expression", "storytelling"],
+        "artist",
+        5,
+        "もし きみが 作った 国に ともだちを 呼べる としたら、どんな 国で なにを したい？",
     ),
 ]
 
