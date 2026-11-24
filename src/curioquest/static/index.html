@@ -207,7 +207,7 @@ async function refreshHome() {
   try {
     const prog = await get(`/children/${state.childId}/progress`);
     $("missionTitle").textContent = prog.today_mission ? prog.today_mission.title : "きょうの ふつうの もんだいは まだだよ";
-    $("missionQuestion").textContent = prog.today_mission ? prog.today_mission.question : "";
+    $("missionQuestion").textContent = prog.today_mission ? prog.today_mission.initial_question : "";
     const limitSec = prog.daily_limit_minutes * 60;
     const remain = prog.remaining_seconds ?? 0;
     const used = Math.min(100, limitSec ? (prog.used_seconds_today / limitSec) * 100 : 0);
