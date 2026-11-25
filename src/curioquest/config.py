@@ -19,6 +19,7 @@ ENV_DB_PATH = "CURIOQUEST_DB_PATH"
 ENV_MISSION_GENERATION = "CURIOQUEST_MISSION_GENERATION"
 ENV_TTS_CACHE = "CURIOQUEST_TTS_CACHE"
 ENV_TTS_CACHE_DIR = "CURIOQUEST_TTS_CACHE_DIR"
+ENV_TTS_WARMUP = "CURIOQUEST_TTS_WARMUP"
 
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 _FALSE_VALUES = frozenset({"0", "false", "no", "off"})
@@ -51,6 +52,8 @@ class Settings:
     # TTS 合成キャッシュ (08-voice-cache 13-3)。None でデータ領域の data/tts_cache/
     tts_cache_enabled: bool = True
     tts_cache_dir: str | None = None
+    # 起動時に定型応答を裏でプリ合成する (08-voice-cache 13-1)。キャッシュ有効時のみ意味がある
+    tts_warmup_enabled: bool = True
 
 
 def settings_from_env() -> Settings:
@@ -67,4 +70,5 @@ def settings_from_env() -> Settings:
         mission_generation_enabled=_env_flag(ENV_MISSION_GENERATION, True),
         tts_cache_enabled=_env_flag(ENV_TTS_CACHE, True),
         tts_cache_dir=os.environ.get(ENV_TTS_CACHE_DIR) or None,
+        tts_warmup_enabled=_env_flag(ENV_TTS_WARMUP, True),
     )

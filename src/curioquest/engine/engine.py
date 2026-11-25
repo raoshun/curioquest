@@ -60,6 +60,16 @@ _FAREWELL_REPLY = "わかったよ。今日はここで終わりだね。また�
 _TIME_UP_REPLY = "今日の利用時間にきたみたい。今日はここまで。またあそぼう。"
 _IDLE_REPLY = "みんなかえりのじかんにいったみたい。またいっしょに考えような。"
 _REPEAT_REQUEST = "ごめんね、よく きこえなかった。もういっかい おしえてくれる？"
+
+# LLM を経由せず決まる応答文 (どこかのターンで必ず全文が音声化される)。
+# TTS キャッシュのウォームアップ対象に使う (08-voice-cache 13-1、Issue #8)。
+CANNED_REPLIES: tuple[str, ...] = (
+    _REPEAT_REQUEST,
+    SAFETY_REPLY,
+    _FAREWELL_REPLY,
+    _TIME_UP_REPLY,
+    _IDLE_REPLY,
+)
 _REVIEW_LEAD = "いっしょに考えたことをふりかえろう。"
 _NO_SUMMARY_REVIEW = "たくさんいっしょに考えられたね。よく考えたね。"
 

@@ -7,19 +7,23 @@ MVP は単一家族（家庭内利用）を前提とし、家族IDはシーー�
 
 from __future__ import annotations
 
+import logging
+import threading
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
 from fastapi import Request
 
-from curioquest.audio import SpeechToText, TextToSpeech
+from curioquest.audio import CachingTts, SpeechToText, TextToSpeech, voice_from_character
 from curioquest.config import Settings, settings_from_env
 from curioquest.db.database import Database
 from curioquest.db.seed import seed_default_data
 from curioquest.db.store import DataStore
-from curioquest.engine import DailyMissionPlanner, DialogueEngine, MissionPlanner
+from curioquest.engine import CANNED_REPLIES, DailyMissionPlanner, DialogueEngine, MissionPlanner
 from curioquest.llm.factory import provider_from_settings
+
+logger = logging.getLogger("curioquest.api.deps")
 
 API = "/api"
 
@@ -104,3 +108,35 @@ def build_audio(settings: Settings) -> tuple[SpeechToText, TextToSpeech]:
         )
         tts = CachingTts(tts, cache_dir, default_speaker_id=settings.voicevox_default_speaker)
     return stt, tts
+
+
+def warm_voice_cache(components: AppComponents) -> int:
+    """定型応答の合成を済ませる（08-voice-cache 13-1、Issue #8）。
+
+    LLM を通らず決まる文言だけを対象にする。VOICEVOX が落ちていても起動を
+    止めないよう失敗は警告に変換して続行する。合成した件数を返す。
+    """
+    tts = components.tts
+    if not isinstance(tts, CachingTts):
+        return 0
+    voices = [voice_from_character(c) for c in components.store.list_characters()]
+    synthesized = tts.warm(list(CANNED_REPLIES), voices)
+    logger.info(
+        "TTS ウォームアップ完了: %d 件合成 (キャッシュヒット率 %.0f%%)",
+        synthesized,
+        tts.hit_rate * 100,
+    )
+    return synthesized
+
+
+def start_voice_warmup(components: AppComponents) -> threading.Thread | None:
+    """ウォームアップを裏テーマで開始する。起動経路 (main) からのみ呼ぶ。
+
+    合成待ちで起動を待たせない・失敗しても落とさない (daemon) がポイント。
+    対象外 (キャッシュ無効など) のときは None を返す。
+    """
+    if not isinstance(components.tts, CachingTts):
+        return None
+    thread = threading.Thread(target=warm_voice_cache, args=(components,), daemon=True)
+    thread.start()
+    return thread
