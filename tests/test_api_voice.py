@@ -238,3 +238,36 @@ def test_voice_body_exactly_at_limit_is_accepted(
     )
     assert resp.status_code == 200
     assert voice_components.store.get_used_seconds(child_id, DAY) == 10
+
+
+def test_voice_turn_logs_stage_latency(
+    voice_components: AppComponents, caplog: pytest.LogCaptureFixture
+) -> None:
+    # 段階A計測: 認識→ターン→合成 の各区間 ms と音声合成可否を 1 行で残す
+    client = make_client(voice_components, stt=FakeStt(texts=["ぞうがすき"]), tts=FakeTts())
+    child = client.post("/api/children", json={"nickname": "はな"}).json()
+    sess = client.post("/api/sessions", json={"child_id": child["id"], "day": DAY}).json()
+
+    with caplog.at_level("INFO", logger="curioquest.api.voice"):
+        resp = client.post(f"/api/sessions/{sess['session_id']}/voice?day={DAY}", content=b"x")
+    assert resp.status_code == 200
+    lines = [r.getMessage() for r in caplog.records if "voice_turn" in r.getMessage()]
+    assert len(lines) == 1
+    message = lines[0]
+    for field in ("stt_ms=", "engine_ms=", "tts_ms=", "voice_available=True"):
+        assert field in message
+
+
+def test_voice_recognition_failure_logs_stage(
+    voice_components: AppComponents, caplog: pytest.LogCaptureFixture
+) -> None:
+    client = make_client(voice_components, stt=BoomStt(), tts=FakeTts())
+    child = client.post("/api/children", json={"nickname": "はな"}).json()
+    sess = client.post("/api/sessions", json={"child_id": child["id"], "day": DAY}).json()
+
+    with caplog.at_level("INFO", logger="curioquest.api.voice"):
+        resp = client.post(f"/api/sessions/{sess['session_id']}/voice?day={DAY}", content=b"x")
+    assert resp.status_code == 503
+    lines = [r.getMessage() for r in caplog.records if "voice_turn" in r.getMessage()]
+    assert len(lines) == 1
+    assert "failed=stt" in lines[0]
