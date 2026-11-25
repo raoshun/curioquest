@@ -90,11 +90,17 @@ def build_components(settings: Settings | None = None) -> AppComponents:
 def build_audio(settings: Settings) -> tuple[SpeechToText, TextToSpeech]:
     """設定から音声アダプタを生成する（内部は遅延接続なので安価）。"""
     # 局所 import: テストで sys.modules を差し替えて失敗経路を検証できるようにする
-    from curioquest.audio import FasterWhisperStt, VoiceVoxTts
+    from curioquest.audio import CachingTts, FasterWhisperStt, VoiceVoxTts
 
     stt = FasterWhisperStt(model_name=settings.stt_model)
     tts = VoiceVoxTts(
         base_url=settings.voicevox_base_url,
         default_speaker_id=settings.voicevox_default_speaker,
     )
+    if settings.tts_cache_enabled:
+        # db と同じデータ領域に WAV キャッシュを置く (08-voice-cache 13-3)
+        cache_dir = settings.tts_cache_dir or str(
+            Path(settings.db_path).expanduser().absolute().parent / "tts_cache"
+        )
+        tts = CachingTts(tts, cache_dir, default_speaker_id=settings.voicevox_default_speaker)
     return stt, tts

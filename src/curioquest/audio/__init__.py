@@ -16,6 +16,7 @@ from curioquest.audio.base import (
     VoiceNotConfigured,
     voice_from_character,
 )
+from curioquest.audio.cache import CachingTts
 from curioquest.audio.fake import FakeStt, FakeTts
 from curioquest.audio.voicevox import VoiceVoxTts
 from curioquest.audio.whisper import FasterWhisperStt
@@ -23,6 +24,7 @@ from curioquest.audio.whisper import FasterWhisperStt
 __all__ = [
     "AudioError",
     "AudioServiceUnavailable",
+    "CachingTts",
     "CharacterVoice",
     "FasterWhisperStt",
     "FakeStt",
