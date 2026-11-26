@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -28,6 +28,7 @@ class FakeLLM:
     default_response: str = "なるほどね。どうしてだと思う？"
     evaluation: ThinkingEvaluation = field(default_factory=ThinkingEvaluation)
     mission: GeneratedMission | None = None
+    stream_chunk_size: int = 8
     calls: list[dict[str, Any]] = field(default_factory=list)
     _responses: deque[str] = field(default_factory=deque, init=False, repr=False)
 
@@ -48,6 +49,18 @@ class FakeLLM:
             return text
         payload: dict[str, Any] = {"text": text}
         return schema(payload)
+
+    def generate_response_stream(
+        self,
+        messages: Sequence[ChatMessage],
+        *,
+        temperature: float | None = None,
+    ) -> Iterator[str]:
+        self.calls.append({"kind": "generate_response_stream", "messages": list(messages)})
+        text = self._responses.popleft() if self._responses else self.default_response
+        size = max(1, self.stream_chunk_size)
+        for start in range(0, len(text), size):
+            yield text[start : start + size]
 
     def evaluate_thinking(self, conversation: Sequence[ChatMessage]) -> ThinkingEvaluation:
         self.calls.append({"kind": "evaluate_thinking", "conversation": list(conversation)})

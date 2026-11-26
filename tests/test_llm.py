@@ -98,6 +98,62 @@ class TestGenerateResponse:
             llm.generate_response([ChatMessage.user("x")])
 
 
+def sse_chunks(pieces: list[str]) -> httpx.Response:
+    lines = [
+        f"data: {json.dumps({'choices': [{'delta': {'content': piece}}]})}" for piece in pieces
+    ]
+    lines.append("data: [DONE]")
+    return httpx.Response(200, text="\n\n".join(lines) + "\n\n")
+
+
+class TestGenerateResponseStream:
+    def test_yields_text_deltas(self) -> None:
+        seen: dict[str, Any] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.update(json.loads(request.content))
+            return sse_chunks(["どうして", "だと", "思う？"])
+
+        llm = make_llm(handler)
+        pieces = list(llm.generate_response_stream([ChatMessage.user("そらってなぜ？")]))
+        assert "".join(pieces) == "どうしてだと思う？"
+        assert seen["stream"] is True
+        assert seen["model"] == "test-model"
+
+    def test_skips_heartbeat_and_missing_delta(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            body = "\n\n".join(
+                [
+                    ": keep-alive",
+                    "data: " + json.dumps({"choices": []}),
+                    "data: " + json.dumps({"choices": [{"delta": {}}]}),
+                    "data: " + json.dumps({"choices": [{"delta": {"content": "はい"}}]}),
+                    "data: [DONE]",
+                ]
+            )
+            return httpx.Response(200, text=body + "\n\n")
+
+        llm = make_llm(handler)
+        assert list(llm.generate_response_stream([ChatMessage.user("x")])) == ["はい"]
+
+    def test_http_error_becomes_llm_error(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(503, text="unavailable")
+
+        llm = make_llm(handler)
+        with pytest.raises(LLMError) as excinfo:
+            list(llm.generate_response_stream([ChatMessage.user("x")]))
+        assert excinfo.value.status_code == 503
+
+    def test_connection_error_becomes_llm_error(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("connection refused", request=request)
+
+        llm = make_llm(handler)
+        with pytest.raises(LLMError):
+            list(llm.generate_response_stream([ChatMessage.user("x")]))
+
+
 class TestEvaluateThinking:
     def test_parses_signals_and_flags(self) -> None:
         captured: dict[str, Any] = {}
@@ -201,6 +257,13 @@ class TestFakeLLM:
         assert llm.generate_response(msgs) == "2つ目"
         assert llm.generate_response(msgs) == "残り"
         assert len(llm.calls) == 3
+
+    def test_stream_chunks_match_response(self) -> None:
+        llm = FakeLLM(responses=["そらって、ひかりの まほうなんだ。"], stream_chunk_size=4)
+        pieces = list(llm.generate_response_stream([ChatMessage.user("x")]))
+        assert "".join(pieces) == "そらって、ひかりの まほうなんだ。"
+        assert all(len(p) <= 4 for p in pieces)
+        assert llm.calls[0]["kind"] == "generate_response_stream"
 
     def test_protocol_conformance(self) -> None:
         assert isinstance(FakeLLM(), LLMProvider)

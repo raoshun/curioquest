@@ -6,7 +6,8 @@ httpx を直接使用し、依存を最小にする。評価・生成の両経�
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+import json
+from collections.abc import Iterator, Mapping, Sequence
 from typing import Any
 
 import httpx
@@ -107,6 +108,54 @@ class OpenAICompatClient:
             raise LLMError(f"想定外の応答形式です: {data!r}") from exc
         return str(content or "")
 
+    def stream_chat(
+        self,
+        messages: Sequence[ChatMessage],
+        *,
+        model: str | None = None,
+        temperature: float | None = None,
+    ) -> Iterator[str]:
+        """SSE ストリーミング補完を実行し、テキスト差分を順に返す。"""
+        payload: dict[str, Any] = {
+            "model": model or self.model,
+            "messages": [m.as_dict() for m in messages],
+            "stream": True,
+        }
+        if temperature is not None:
+            payload["temperature"] = temperature
+        try:
+            with self._client.stream("POST", self._endpoint, json=payload) as response:
+                if response.status_code >= 400:
+                    response.read()
+                    raise LLMError(
+                        f"LLM API がエラーを返しました: {response.status_code}",
+                        status_code=response.status_code,
+                    )
+                yield from _iter_sse_text(response.iter_lines())
+        except httpx.HTTPError as exc:
+            raise LLMError(f"LLM API に接続できません: {exc}") from exc
+
+
+def _iter_sse_text(lines: Iterator[str]) -> Iterator[str]:
+    """OpenAI 互換 SSE 行から choices[0].delta.content だけを抽出する。"""
+    for line in lines:
+        if not line or not line.startswith("data:"):
+            continue
+        data = line[len("data:") :].strip()
+        if data == "[DONE]":
+            return
+        try:
+            chunk = json.loads(data)
+        except json.JSONDecodeError:
+            continue
+        choices = chunk.get("choices") or []
+        if not choices:
+            continue
+        delta = choices[0].get("delta") or {}
+        piece = delta.get("content")
+        if piece:
+            yield str(piece)
+
 
 class OpenAICompatLLM:
     """LLMProvider インターフェースを満たす OpenAI 互換プロバイダ。"""
@@ -148,6 +197,15 @@ class OpenAICompatLLM:
         except ValueError as exc:
             raise LLMError(str(exc)) from exc
         return schema(payload)
+
+    def generate_response_stream(
+        self,
+        messages: Sequence[ChatMessage],
+        *,
+        temperature: float | None = None,
+    ) -> Iterator[str]:
+        temp = temperature if temperature is not None else self._response_temperature
+        return self._chat_client.stream_chat(messages, temperature=temp)
 
     def evaluate_thinking(self, conversation: Sequence[ChatMessage]) -> ThinkingEvaluation:
         messages = [
