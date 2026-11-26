@@ -291,3 +291,77 @@ def test_concurrent_same_session_turns_are_serialized(store: DataStore) -> None:
     assert states.count(DialogueState.COMPLETE) == 1
     assert not store.get_session(session_id).is_active
     assert len(store.list_mission_results(kid.id)) == 1
+
+
+class _BlockingOnlyLLM:
+    """generate_response_stream を持たない LLM (後方互換の確認用)。"""
+
+    def __init__(self, responses: list[str]) -> None:
+        self._fake = FakeLLM(responses=responses)
+
+    def generate_response(self, messages, schema=None, *, temperature=None):  # noqa: ANN001, ANN201
+        return self._fake.generate_response(messages, schema, temperature=temperature)
+
+    def evaluate_thinking(self, conversation):  # noqa: ANN001
+        return self._fake.evaluate_thinking(conversation)
+
+
+def test_handle_turn_streams_deltas_concatenated_to_reply(store: DataStore) -> None:
+    reply = "そらがあおいのは、ひかりが ちって まぶしいからなんだ。なまえは なに？"
+    llm = FakeLLM(responses=["i", reply], stream_chunk_size=5)
+    _kid, engine, started = start(store, llm)
+    deltas: list[str] = []
+    turn = engine.handle_turn(
+        started.session.id, "なんで そらは あおいの？", on_delta=deltas.append
+    )
+    assert "".join(deltas) == turn.reply == reply
+    kinds = [c["kind"] for c in llm.calls]
+    assert kinds == ["generate_response", "generate_response_stream", "evaluate_thinking"]
+
+
+def test_handle_turn_hint_turn_streams_deltas(store: DataStore) -> None:
+    reply = "たいようの ひかりを ぜんぶ みてみよう。"
+    llm = FakeLLM(responses=["i", reply], stream_chunk_size=4)
+    _kid, engine, started = start(store, llm)
+    deltas: list[str] = []
+    turn = engine.handle_turn(started.session.id, "わかんない、おしえて", on_delta=deltas.append)
+    assert "".join(deltas) == turn.reply == reply
+
+
+def test_handle_turn_canned_reply_emits_single_delta(store: DataStore) -> None:
+    llm = FakeLLM(responses=["i"])
+    _kid, engine, started = start(store, llm)
+    deltas: list[str] = []
+    turn = engine.handle_turn(started.session.id, "マッチあそび したい", on_delta=deltas.append)
+    assert deltas == [SAFETY_REPLY]
+    assert turn.reply == SAFETY_REPLY
+
+
+def test_handle_turn_empty_utterance_emits_repeat_delta(store: DataStore) -> None:
+    from curioquest.engine.engine import _REPEAT_REQUEST
+
+    llm = FakeLLM(responses=["i"])
+    _kid, engine, started = start(store, llm)
+    deltas: list[str] = []
+    turn = engine.handle_turn(started.session.id, "   ", on_delta=deltas.append)
+    assert deltas == [_REPEAT_REQUEST]
+    assert turn.reply == _REPEAT_REQUEST
+
+
+def test_handle_turn_falls_back_for_providers_without_stream(store: DataStore) -> None:
+    llm = _BlockingOnlyLLM(["i", "そうなんだ。どうしてだと思う？"])
+    _kid, engine, started = start(store, llm)
+    deltas: list[str] = []
+    turn = engine.handle_turn(
+        started.session.id, "ほしは なに？", on_delta=deltas.append
+    )
+    assert deltas == [turn.reply] == ["そうなんだ。どうしてだと思う？"]
+
+
+def test_handle_turn_without_on_delta_uses_blocking_path(store: DataStore) -> None:
+    llm = FakeLLM(responses=["i", "ふつうの こたえ"])
+    _kid, engine, started = start(store, llm)
+    turn = engine.handle_turn(started.session.id, "なんで？")
+    assert turn.reply == "ふつうの こたえ"
+    kinds = [c["kind"] for c in llm.calls]
+    assert kinds == ["generate_response", "generate_response", "evaluate_thinking"]

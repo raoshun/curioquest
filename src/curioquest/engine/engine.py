@@ -170,12 +170,35 @@ class DialogueEngine:
         *,
         seconds_spent: int = 0,
         day: date | str | None = None,
+        on_delta: Callable[[str], None] | None = None,
     ) -> TurnResult:
-        """子どもの発話 1 件を処理する。同一セッション内は直列化して実行する。"""
+        """子どもの発話 1 件を処理する。同一セッション内は直列化して実行する。
+
+        on_delta を渡すと、応答文本のストリーム差分 (連結すると reply と一致) を
+        処理中に順へ通知する。LLM ストリーミング非対応や固定応答の経路では
+        応答全体を 1 差分として通知する。
+        """
+        if on_delta is None:
+            with self._gate(session_id):
+                return self._handle_turn_unlocked(
+                    session_id, text, seconds_spent=seconds_spent, day=day
+                )
+
+        emitted = False
+
+        def _emit(piece: str) -> None:
+            nonlocal emitted
+            if piece:
+                emitted = True
+                on_delta(piece)
+
         with self._gate(session_id):
-            return self._handle_turn_unlocked(
-                session_id, text, seconds_spent=seconds_spent, day=day
+            result = self._handle_turn_unlocked(
+                session_id, text, seconds_spent=seconds_spent, day=day, on_delta=_emit
             )
+        if not emitted and result.reply:
+            on_delta(result.reply)
+        return result
 
     def _handle_turn_unlocked(
         self,
@@ -184,6 +207,7 @@ class DialogueEngine:
         *,
         seconds_spent: int = 0,
         day: date | str | None = None,
+        on_delta: Callable[[str], None] | None = None,
     ) -> TurnResult:
         """状態遷移・記録・応答生成本体（セッション ゲート保持済みで呼ぶ）。"""
         session = self.store.get_session(session_id)
@@ -233,8 +257,8 @@ class DialogueEngine:
             return self._wrap(result, intent)
 
         if is_asking_for_help(intent):
-            return self._hint_turn(session, child, mission, character, intent)
-        return self._normal_turn(session, child, mission, character, intent)
+            return self._hint_turn(session, child, mission, character, intent, on_delta)
+        return self._normal_turn(session, child, mission, character, intent, on_delta)
 
     def maybe_idle(
         self,
@@ -288,6 +312,28 @@ class DialogueEngine:
 
     # -------------------------------------------------------------- helpers
 
+    def _generate_reply(
+        self,
+        conversation: list[ChatMessage],
+        on_delta: Callable[[str], None] | None,
+    ) -> str:
+        """応答文本を生成する。on_delta があればストリーミング生成し差分を通知する。
+
+        プロバイダが generate_response_stream に非対応の場合は通常の生成へ退避し、
+        その場合は応答全体を 1 差分として通知する。
+        """
+        stream_fn = getattr(self.llm, "generate_response_stream", None)
+        if on_delta is None or stream_fn is None:
+            reply = str(self.llm.generate_response(conversation))
+            if on_delta is not None:
+                on_delta(reply)
+            return reply
+        parts: list[str] = []
+        for piece in stream_fn(conversation):
+            parts.append(piece)
+            on_delta(piece)
+        return "".join(parts)
+
     def _hint_turn(
         self,
         session: DialogueSession,
@@ -295,6 +341,7 @@ class DialogueEngine:
         mission: Mission,
         character: Character,
         intent: ChildIntent,
+        on_delta: Callable[[str], None] | None = None,
     ) -> TurnResult:
         """「教えて」要求へのヒントターン。出し切ったら終了（6-4）。"""
         hints_used = self._count_assistant_state(session.id, DialogueState.HINT)
@@ -310,7 +357,7 @@ class DialogueEngine:
         conversation = self._conversation_for(
             session, character, mission, child, DialogueState.HINT
         )
-        reply = str(self.llm.generate_response(conversation))
+        reply = self._generate_reply(conversation, on_delta)
         updated = self.store.update_session_state(session.id, DialogueState.HINT)
         self.store.append_message(
             session.id, child.id, MessageRole.ASSISTANT, reply, state=DialogueState.HINT
@@ -324,6 +371,7 @@ class DialogueEngine:
         mission: Mission,
         character: Character,
         intent: ChildIntent,
+        on_delta: Callable[[str], None] | None = None,
     ) -> TurnResult:
         """通常の深掘りターン。思考評価・思考記録・スタンプ判定を伴う。"""
         n_explorations = self._count_assistant_state(session.id, DialogueState.EXPLORATION)
@@ -333,7 +381,7 @@ class DialogueEngine:
             else DialogueState.EXPLORATION
         )
         conversation = self._conversation_for(session, character, mission, child, planned)
-        reply = str(self.llm.generate_response(conversation))
+        reply = self._generate_reply(conversation, on_delta)
 
         history = self._history_messages(session.id)
         evaluation = self.llm.evaluate_thinking(history)
