@@ -48,6 +48,7 @@ from curioquest.api.security import (
     ParentAuth,
     PinLocked,
 )
+from curioquest.api.streaming import add_streaming_routes
 from curioquest.api.voice import add_voice_routes
 from curioquest.audio import CachingTts
 from curioquest.db.store import DataStore, NotFound
@@ -468,5 +469,6 @@ def create_app(components: AppComponents) -> FastAPI:
         return DashboardOut(day=resolved_day, children=rows)
 
     add_voice_routes(app)
+    add_streaming_routes(app)
 
     return app
