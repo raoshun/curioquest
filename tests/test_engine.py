@@ -352,9 +352,7 @@ def test_handle_turn_falls_back_for_providers_without_stream(store: DataStore) -
     llm = _BlockingOnlyLLM(["i", "そうなんだ。どうしてだと思う？"])
     _kid, engine, started = start(store, llm)
     deltas: list[str] = []
-    turn = engine.handle_turn(
-        started.session.id, "ほしは なに？", on_delta=deltas.append
-    )
+    turn = engine.handle_turn(started.session.id, "ほしは なに？", on_delta=deltas.append)
     assert deltas == [turn.reply] == ["そうなんだ。どうしてだと思う？"]
 
 
