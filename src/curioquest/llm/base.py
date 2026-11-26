@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
@@ -86,6 +86,18 @@ class LLMProvider(Protocol):
         temperature: float | None = None,
     ) -> Any:
         """通常対話を生成する。schema を渡した場合は JSON を変換して返す。"""
+
+    def generate_response_stream(
+        self,
+        messages: Sequence[ChatMessage],
+        *,
+        temperature: float | None = None,
+    ) -> Iterator[str]:
+        """通常対話をテキスト差分のストリームとして生成する。
+
+        連結すると generate_response と同じ応答になる。差分生成に非対応の
+        プロバイダは未実装としてよい (エンジン側は generate_response へ退避する)。
+        """
 
     def evaluate_thinking(self, conversation: Sequence[ChatMessage]) -> ThinkingEvaluation:
         """会話の思考の痕跡を評価する（対話生成とは独立の経路）。"""

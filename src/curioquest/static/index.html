@@ -297,6 +297,7 @@ let mediaStream = null, audioCtx = null, processor = null, sourceNode = null;
 let recording = false, recordedChunks = [], recordStart = 0, timerId = null, busy = false;
 $("micBtn").addEventListener("click", () => (recording ? stopRecording() : startRecording()));
 async function startRecording() {
+  stopPlayback();
   set("recStatus", "マイク じゅんび中…「とどける(許可)」を おしてね");
   try {
     audioCtx = audioCtx ?? new AudioContext();
@@ -337,51 +338,101 @@ function stopRecording() {
   if (total === 0) { set("recStatus", "おとが とどかなかったよ(おくってないよ)。もういちど おしえてね"); return; }
   postVoice(encodeWav(pcm, 16000), Math.max(1, Math.round((performance.now() - recordStart) / 1000)));
 }
+// ---- SSE ストリーミング・ターン (Issue #10) ----
+// テキストは LLM の差分 (delta) をそのまま画面へ、音声は合成できた文から順に
+// 再生キューへ積む。ターン確定 (turn) で全文とスタンプ等の最終状態を描画する。
+let currentAudio = null;
+let playbackToken = 0;
+function stopPlayback() {
+  playbackToken += 1;
+  if (currentAudio) { currentAudio.pause(); currentAudio = null; }
+}
+function makeAudioQueue() {
+  // ターンごとに生成し、到着順 (index 昇順) を保証されたセグメントを直列再生する。
+  // ターン番号 (token) が進んだら残っていたキューも取りやめる。
+  const token = playbackToken;
+  let chain = Promise.resolve();
+  return {
+    enqueue(b64) {
+      chain = chain.then(() => {
+        if (token !== playbackToken) return;
+        try {
+          const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+          const a = new Audio(URL.createObjectURL(new Blob([bytes], { type: "audio/wav" })));
+          currentAudio = a;
+          return a.play().catch(() => { /* 自動再生ブロック等は黙ってテキストだけで続ける */ });
+        } catch { return undefined; }
+      });
+    },
+  };
+}
+async function streamTurn(url, opts, handlers) {
+  const res = await fetch(url, opts);
+  if (!res.ok) {
+    let d = res.statusText;
+    try { d = (await res.json()).detail ?? d; } catch { /* ignore */ }
+    set("turnStatus", `おくることができなかった: ${d}`);
+    return;
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  const onEvent = (ev) => {
+    if (ev.type === "delta") { handlers.streamed += ev.text; $("reply").textContent = handlers.streamed; }
+    else if (ev.type === "audio") handlers.audio?.enqueue(ev.data_b64);
+    else if (ev.type === "audio_error") { /* この 1 文は音声なし。テキストと次の音声は続ける */ }
+    else if (ev.type === "turn") renderTurn(ev.turn, handlers.words, ev.transcript, handlers.streamed);
+    else if (ev.type === "error") set("turnStatus", `おこまったよ: ${ev.detail}`);
+  };
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let idx;
+    while ((idx = buf.indexOf("\n\n")) >= 0) {
+      for (const line of buf.slice(0, idx).split("\n")) {
+        if (line.startsWith("data: ")) { try { onEvent(JSON.parse(line.slice(6))); } catch { /* ignore */ } }
+      }
+      buf = buf.slice(idx + 2);
+    }
+  }
+}
 async function postVoice(wav, seconds) {
   if (!state.session || busy) return;
   busy = true;
+  stopPlayback();
+  const handlers = { streamed: "", audio: makeAudioQueue(), words: "(こえで こたえたよ)" };
   set("turnStatus", "こえを おくって、かんがえて もらっているよ…");
   try {
-    const res = await fetch(`/api/sessions/${state.session.session_id}/voice?seconds_spent=${seconds}`, {
-      method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: wav });
-    if (!res.ok) {
-      let d = res.statusText;
-      try { d = (await res.json()).detail ?? d; } catch { /* ignore */ }
-      set("turnStatus", `おくることができなかった: ${d}`);
-      return;
-    }
-    renderTurn({ ...(await res.json()) }, "(こえで こたえたよ)");
+    await streamTurn(`/api/sessions/${state.session.session_id}/voice/stream?seconds_spent=${seconds}`,
+      { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: wav }, handlers);
   } catch (err) { set("turnStatus", `つながり が きれた: ${err.message}`); }
   finally { busy = false; }
 }
 async function sendWords(text) {
   if (!state.session || busy) return;
   busy = true;
+  stopPlayback();
+  const handlers = { streamed: "", words: text };
   set("turnStatus", "おてがみを おくって いるよ…");
   try {
-    const out = await post(`/sessions/${state.session.session_id}/message`, { text, seconds_spent: 0 });
-    renderTurn(out, text);
+    await streamTurn(`/api/sessions/${state.session.session_id}/message/stream`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, seconds_spent: 0 }) }, handlers);
   } catch (err) { set("turnStatus", `おてがみ しっぱい: ${err.message}`); }
   finally { busy = false; }
 }
 $("stopWordHi").addEventListener("click", () => sendWords("はい!"));
 $("stopWordYada").addEventListener("click", () => sendWords("やだ!"));
-function renderTurn(out, words) {
+function renderTurn(out, words, transcript, streamed) {
   if (out.thinking_summary) $("transcript").textContent = `きろく: ${out.thinking_summary}`;
-  $("reply").textContent = out.reply;
+  // ストリームが途中で切れて turn が届かなかったときは、ここまで届いた差分をそのまま残す。
+  if (out.reply) $("reply").textContent = out.reply;
+  else if (streamed) $("reply").textContent = streamed;
   const notes = [];
+  if (transcript) notes.push(`きみ: ${transcript}`);
   if (out.stamps_awarded?.length) notes.push(`スタンプを ゲット: ${out.stamps_awarded.join(" / ")}`);
   if (out.finished) notes.push(`${out.end_reason ?? "おわり"} で おはなしを やすんだよ`);
   set("turnStatus", notes.join("/") || "スタンプ げットは ないよ");
-  playAudio(out);
-}
-async function playAudio(out) {
-  if (!out.voice_available || !out.audio_wav_b64) return;
-  try {
-    const bytes = Uint8Array.from(atob(out.audio_wav_b64), (c) => c.charCodeAt(0));
-    const a = new Audio(URL.createObjectURL(new Blob([bytes], { type: "audio/wav" })));
-    await a.play();
-  } catch { /* 自動再生ブロック等は黙ってテキストだけで続ける */ }
 }
 function downsample(buf, fromRate, toRate) {
   if (fromRate === toRate) return buf;

@@ -126,6 +126,8 @@ MVPで必要な主要テーブルを定義する。
 | GET | /api/missions/today | 今日のミッション |
 | POST | /api/sessions | 対話開始 |
 | POST | /api/sessions/{id}/message | 発話送信 |
+| POST | /api/sessions/{id}/message/stream | 発話送信 (ストリーミング) |
+| POST | /api/sessions/{id}/voice/stream | 音声送信 (ストリーミング) |
 | POST | /api/sessions/{id}/complete | ミッション終了 |
 | GET | /api/children/{id}/stamps | スタンプ一覧 |
 | GET | /api/children/{id}/memories | Memory取得 |
@@ -135,3 +137,24 @@ MVPで必要な主要テーブルを定義する。
 長時間の音声接続が必要になった場合は、WebSocketへの移行も検討する。
 定型文を組み合わせた対話では合成音の再利用が可能なため、音声キャッシュによる
 レスポンス性改善は 08-voice-cache.md で検討する。
+
+## ストリーミング応答 (Issue #10)
+
+テキスト表示と音声再生を並行して進めるため、ターンの送信用に SSE
+(Server-Sent Events) のストリーミングAPIを用意する。LLM の応答は差分
+(delta) として逐次配信し、画面は受信した時点から表示を始められる。
+音声は応答文を文単位に区切り、合成が終わった順に配信するため、子どもは
+全文の合成を待たずに最新の音声へ移れる。新しいターンを開始するときには
+前ターンの再生中・待機中の音声は取り消す。
+
+| 種類 | ペイロード | 意味 |
+|---|---|---|
+| delta | text | LLM 応答の追記差分 (連結すると最終応答と一致) |
+| audio | index, data_b64 | i 文目の合成音声 (WAV の Base64) |
+| audio_error | index | i 文目の合成失敗 (音声なしで続行) |
+| turn | ターン結果, transcript | 確定したターン全体 (音声送信のとき音声認識結果も) |
+| error | detail, status | ターン処理の失敗 |
+
+イベントは 1 行ずつ JSON の data 行として届くため、受信側は届いた順に
+そのまま処理でき、音声の遅延がテキスト表示を止めることはない。通信が
+途中で切れた場合は、これまで届いた差分をそのまま残す。
