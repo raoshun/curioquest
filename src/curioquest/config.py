@@ -17,6 +17,9 @@ ENV_VOICEVOX_DEFAULT_SPEAKER = "CURIOQUEST_VOICEVOX_DEFAULT_SPEAKER"
 ENV_STT_MODEL = "CURIOQUEST_STT_MODEL"
 ENV_DB_PATH = "CURIOQUEST_DB_PATH"
 ENV_MISSION_GENERATION = "CURIOQUEST_MISSION_GENERATION"
+ENV_TTS_CACHE = "CURIOQUEST_TTS_CACHE"
+ENV_TTS_CACHE_DIR = "CURIOQUEST_TTS_CACHE_DIR"
+ENV_TTS_WARMUP = "CURIOQUEST_TTS_WARMUP"
 
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 _FALSE_VALUES = frozenset({"0", "false", "no", "off"})
@@ -46,6 +49,11 @@ class Settings:
     db_path: str = "data/curioquest.db"
     # 個人最適ミッションの LLM 生成 (6-3)。材料が無い・LLM が失敗したときは定番DBへ倒す
     mission_generation_enabled: bool = True
+    # TTS 合成キャッシュ (08-voice-cache 13-3)。None でデータ領域の data/tts_cache/
+    tts_cache_enabled: bool = True
+    tts_cache_dir: str | None = None
+    # 起動時に定型応答を裏でプリ合成する (08-voice-cache 13-1)。キャッシュ有効時のみ意味がある
+    tts_warmup_enabled: bool = True
 
 
 def settings_from_env() -> Settings:
@@ -60,4 +68,7 @@ def settings_from_env() -> Settings:
         stt_model=os.environ.get(ENV_STT_MODEL, "small"),
         db_path=os.environ.get(ENV_DB_PATH, "data/curioquest.db"),
         mission_generation_enabled=_env_flag(ENV_MISSION_GENERATION, True),
+        tts_cache_enabled=_env_flag(ENV_TTS_CACHE, True),
+        tts_cache_dir=os.environ.get(ENV_TTS_CACHE_DIR) or None,
+        tts_warmup_enabled=_env_flag(ENV_TTS_WARMUP, True),
     )

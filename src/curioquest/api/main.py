@@ -17,7 +17,8 @@ import uvicorn
 from fastapi import FastAPI
 
 from curioquest.api.app import create_app
-from curioquest.api.deps import build_components
+from curioquest.api.deps import build_components, start_voice_warmup
+from curioquest.config import settings_from_env
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
@@ -27,7 +28,12 @@ ENV_PORT = "CURIOQUEST_PORT"
 
 def create_standalone_app() -> FastAPI:
     """環境変数からアプリを1つ組み立てる（起動時に1回だけ呼ばれる）。"""
-    return create_app(build_components())
+    settings = settings_from_env()
+    components = build_components(settings)
+    if settings.tts_warmup_enabled:
+        # 定型応答の音作りは裏で。VOICEVOX 未起動でも起動は止めない (Issue #8)
+        start_voice_warmup(components)
+    return create_app(components)
 
 
 def main() -> None:

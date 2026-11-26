@@ -39,6 +39,7 @@ from curioquest.api.schemas import (
     ThinkingOut,
     TodayOut,
     TurnOut,
+    VoiceCacheOut,
     character_out,
 )
 from curioquest.api.security import (
@@ -48,6 +49,7 @@ from curioquest.api.security import (
     PinLocked,
 )
 from curioquest.api.voice import add_voice_routes
+from curioquest.audio import CachingTts
 from curioquest.db.store import DataStore, NotFound
 from curioquest.domain.models import Child, MemoryType, Mission
 from curioquest.engine import DailyLimitExceeded, SessionClosed
@@ -357,6 +359,18 @@ def create_app(components: AppComponents) -> FastAPI:
             ConversationOut.from_summary(summary)
             for summary in store.list_session_summaries(child_id, limit=limit)
         ]
+
+    @app.delete(f"{API}/parent/voice-cache", response_model=VoiceCacheOut)
+    def delete_voice_cache(request: Request) -> VoiceCacheOut:
+        """TTS 音声キャッシュを全消去 (Issue #6、05-safety-quality の削除経路)。
+
+        消えるのは定型文などの合成済み WAV だけで、会話テキストや記録には
+        触れない。次回以降のターンで必要な分だけ作り直される。
+        """
+        _require_parent(request)
+        tts = _cq(request).tts
+        deleted = tts.clear() if isinstance(tts, CachingTts) else 0
+        return VoiceCacheOut(deleted=deleted)
 
     @app.get(f"{API}/parent/pin/status", response_model=PinStatusOut)
     def get_pin_status(request: Request) -> PinStatusOut:

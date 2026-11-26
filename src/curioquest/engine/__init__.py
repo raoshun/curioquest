@@ -5,6 +5,7 @@
 """
 
 from curioquest.engine.engine import (
+    CANNED_REPLIES,
     DailyLimitExceeded,
     DialogueEngine,
     SessionClosed,
@@ -21,6 +22,7 @@ from curioquest.engine.missions import (
 from curioquest.engine.rules import ChildIntent, detect_intent, is_asking_for_help
 
 __all__ = [
+    "CANNED_REPLIES",
     "GENERATED_ID_PREFIX",
     "ChildIntent",
     "ClassicMissionPlanner",

@@ -9,11 +9,16 @@
 
 from __future__ import annotations
 
+import logging
+import time
+
 from fastapi import FastAPI, HTTPException, Query, Request
 
 from curioquest.api.deps import API, AppComponents, cq, day_or_today
 from curioquest.api.schemas import TurnOut, VoiceOut
 from curioquest.audio import AudioError, voice_from_character
+
+logger = logging.getLogger("curioquest.api.voice")
 
 # アップロード音声の上限。マイクは 60 秒までで、WAV 48kHz・16bit・モノでも
 # 約 5.5MiB。余裕を見て 12MiB とし、超過は即座に 413 で弾く（メモリ枯渇防止）。
@@ -48,20 +53,46 @@ def add_voice_routes(app: FastAPI) -> None:
         if comp.stt is None:
             raise HTTPException(status_code=503, detail="この設定では音声を入力できません")
         audio = await _read_voice_body(request)
+        started = time.perf_counter()
         try:
             text = comp.stt.transcribe(audio)
         except AudioError as exc:
+            logger.info(
+                "voice_turn session=%s failed=stt stt_ms=%d", session_id, _elapsed_ms(started)
+            )
             raise HTTPException(
                 status_code=503,
                 detail=f"音声認識に失敗したため発話を処理できませんでした: {exc}",
             ) from exc
+        stt_ms = _elapsed_ms(started)
+
+        started = time.perf_counter()
         result = comp.engine.handle_turn(
             session_id,
             text,
             seconds_spent=seconds_spent,
             day=day_or_today(day),
         )
-        return _voice_out(comp, TurnOut.from_result(result), result.session.character_id)
+        engine_ms = _elapsed_ms(started)
+
+        started = time.perf_counter()
+        out = _voice_out(comp, TurnOut.from_result(result), result.session.character_id)
+        tts_ms = _elapsed_ms(started)
+
+        logger.info(
+            "voice_turn session=%s stt_ms=%d engine_ms=%d tts_ms=%d voice_available=%s",
+            session_id,
+            stt_ms,
+            engine_ms,
+            tts_ms,
+            out.voice_available,
+        )
+        return out
+
+
+def _elapsed_ms(started: float) -> int:
+    """perf_counter 開始時刻からの経過ミリ秒（ログ・計測用）。"""
+    return int((time.perf_counter() - started) * 1000)
 
 
 def _voice_out(comp: AppComponents, turn: TurnOut, character_id: str) -> VoiceOut:

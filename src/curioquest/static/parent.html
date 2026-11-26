@@ -96,6 +96,7 @@
       </div>
       <div class="row">
         <button id="changePinBtn">PIN を変える</button>
+        <button id="clearCacheBtn">音声キャッシュをけす</button>
         <button class="danger" id="logoutBtn">ログアウト</button>
       </div>
     </div>
@@ -366,6 +367,15 @@ $("changePinOkBtn").addEventListener("click", async () => {
     fail("changePinStatus")(err);
   }
 });
+$("clearCacheBtn").addEventListener("click", async () => {
+  try {
+    const res = await req("DELETE", `${API}/parent/voice-cache`);
+    ok("dashStatus", `おとキャッシュを ${res.deleted} こ けしました。これからの ターンで ひつような おとは また つくります。`);
+  } catch (err) {
+    fail("dashStatus")(err);
+  }
+});
+
 $("logoutBtn").addEventListener("click", async () => {
   try {
     await req("POST", `${API}/parent/pin/logout`);

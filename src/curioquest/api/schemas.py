@@ -335,6 +335,12 @@ class PinChangeIn(BaseModel):
     new_pin: str
 
 
+class VoiceCacheOut(BaseModel):
+    """TTS 音声キャッシュの削除結果。消したのは合成済みの音だけで会話記録は不変。"""
+
+    deleted: int
+
+
 def character_out(character: Character) -> CharacterOut:
     """CharacterOut はフィールドが多いためマッパーを関数で切り出す。"""
     return CharacterOut(
